@@ -381,13 +381,13 @@ def test_runtime_lib_dirs_single_conf(lib_dir_setup):
     is_windows = platform.system() == "Windows"
     if is_windows:
         generator = '-c tools.cmake.cmaketoolchain:generator=Ninja'
-    
+
     client.run(f'install . -s build_type=Release {generator}')
     contents = client.load("conan_toolchain.cmake")
     pattern_lib_path = r'list\(PREPEND CMAKE_LIBRARY_PATH (.*)\)'
     pattern_lib_dirs = r'set\(CONAN_RUNTIME_LIB_DIRS (.*) \)'
 
-    # On *nix platforms: the list in `CMAKE_LIBRARY_PATH` 
+    # On *nix platforms: the list in `CMAKE_LIBRARY_PATH`
     # is the same as `CONAN_RUNTIME_LIB_DIRS`
     # On windows, it's the same but with `bin` instead of `lib`
     cmake_library_path = re.search(pattern_lib_path, contents).group(1)
@@ -1501,7 +1501,6 @@ def test_toolchain_keep_absolute_paths():
     presets = json.loads(c.load(user_presets["include"][0]))
     assert os.path.isabs(presets["configurePresets"][0]["toolchainFile"])
 
-
 def test_output_dirs_gnudirs_local_default():
     # https://github.com/conan-io/conan/issues/14733
     c = TestClient()
@@ -1575,3 +1574,30 @@ def test_output_dirs_gnudirs_local_custom():
     c.run("build .")
     _assert_install(c.out)
     assert "CMAKE_INSTALL_PREFIX" not in c.out
+
+
+def test_toolchain_extra_variables():
+    windows_profile = textwrap.dedent("""
+        [settings]
+        os=Windows
+        arch=x86_64
+        [conf]
+        tools.cmake.cmaketoolchain:extra_variables={'CMAKE_GENERATOR_INSTANCE': '"${GENERATOR_INSTANCE}/buildTools/"', 'FOO': '42 CACHE' }
+        """)
+
+    client = TestClient(path_with_spaces=False)
+    client.save({"conanfile.txt": "[generators]\nCMakeToolchain",
+                 "windows": windows_profile})
+
+    # Test passing extra_variables from profile
+    client.run("install . --profile:build=windows --profile:host=windows")
+    toolchain = client.load("conan_toolchain.cmake")
+    assert 'set(CMAKE_GENERATOR_INSTANCE "${GENERATOR_INSTANCE}/buildTools/")' in toolchain
+    assert 'set(FOO 42 CACHE)' in toolchain
+
+    # Test input from command line passing dict between doble quotes
+
+    client.run("install . -c tools.cmake.cmaketoolchain:extra_variables=\"{'CMAKE_GENERATOR_INSTANCE': '\"\${GENERATOR_INSTANCE}/buildTools/\"', 'FOO': '42 CACHE'}\"")
+    toolchain = client.load("conan_toolchain.cmake")
+    assert 'set(CMAKE_GENERATOR_INSTANCE "${GENERATOR_INSTANCE}/buildTools/")' in toolchain
+    assert 'set(FOO 42 CACHE)' in toolchain
