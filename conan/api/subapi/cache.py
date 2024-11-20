@@ -198,7 +198,7 @@ class CacheAPI:
                     pkg_layout = cache.create_pkg_layout(pref)  # DB Folder entry
                 # FIXME: This is not taking into account the existence of previous package
                 unzipped_pkg_folder = pref_bundle["package_folder"]
-                out.info(f"Restore: {pref} in {unzipped_pkg_folder}")
+                out.info(f"Restore: {pref} from {unzipped_pkg_folder}")
                 # If the DB folder entry is different to the disk unzipped one, we need to move it
                 # This happens for built (not downloaded) packages in the source "conan cache save"
                 db_pkg_folder = os.path.relpath(pkg_layout.package(), cache_folder)
@@ -213,7 +213,7 @@ class CacheAPI:
                 unzipped_metadata_folder = pref_bundle.get("metadata_folder")
                 if unzipped_metadata_folder:
                     # FIXME: Restore metadata is not incremental, but destructive
-                    out.info(f"Restore: {pref} metadata in {unzipped_metadata_folder}")
+                    out.info(f"Restore: {pref} metadata from {unzipped_metadata_folder}")
                     db_metadata_folder = os.path.relpath(pkg_layout.metadata(), cache_folder)
                     db_metadata_folder = db_metadata_folder.replace("\\", "/")
                     if db_metadata_folder != unzipped_metadata_folder:

@@ -73,7 +73,7 @@ def create(conan_api, parser, *args):
             raise ConanException(f"Invalid runner configuration. 'type' must be defined")
         runner_instances_map = {
             'docker': DockerRunner,
-            # 'ssh': SSHRunner,
+            'ssh': SSHRunner,
             # 'wsl': WSLRunner,
         }
         try:
