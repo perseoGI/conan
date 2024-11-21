@@ -99,6 +99,8 @@ class SSHRunner:
                 self.logger.error(f"Unable to create remote workfolder at {folder}: {result.stderr}")
 
         # TODO: allow multiple venv given the client side conan version
+        requested_conan_version = "dev" if conan_version.pre == "dev" else str(conan_version)
+
         conan_venv = remote_folder + "/venv"
         if self.is_remote_windows:
             conan_cmd = remote_folder + "/venv/Scripts/conan.exe"
@@ -118,7 +120,6 @@ class SSHRunner:
         finally:
             sftp.close()
 
-        requested_conan_version = "latest" if conan_version.pre == "dev" else str(conan_version)
 
         if self.is_remote_windows:
             python_command = remote_folder + "/venv" + "/Scripts" + "/python.exe"
@@ -134,7 +135,7 @@ class SSHRunner:
         else:
             version = self._run_command(f"{conan_cmd} --version").stdout
             remote_conan_version = Version(version[version.rfind(" ")+1:])
-            if requested_conan_version == "latest" and remote_conan_version.bump(1) == str(conan_version).replace("-dev", ""):
+            if requested_conan_version == "dev" and remote_conan_version.bump(1) == str(conan_version).replace("-dev", ""):
                 pass
             elif remote_conan_version != requested_conan_version:
                 self.logger.debug(f"Remote Conan version mismatch: {remote_conan_version} != {requested_conan_version}")
@@ -145,7 +146,7 @@ class SSHRunner:
     def _install_conan_remotely(self, python_command: str, version: str):
         self.logger.debug(f"Installing conan version: {version}")
         # Note: this may fail on windows
-        result = self._run_command(f"{python_command} -m pip install conan{f'=={version}' if version != 'latest' else ' --upgrade'}")
+        result = self._run_command(f"{python_command} -m pip install conan{f'=={version}' if version != 'dev' else ' --upgrade'}")
         if not result.success:
             self.logger.error(f"Unable to install conan in venv: {result.stderr}")
 
@@ -195,14 +196,16 @@ class SSHRunner:
 
         try:
             # Iterate over all profiles and copy using SFTP
-            for profile in self.args.profile_host + self.args.profile_build:
+            for profile in set(self.args.profile_host + self.args.profile_build):
                 dest_filename = remote_profile_path / profile
                 profile_path = self.conan_api.profiles.get_path(profile)
                 self.logger.debug(f"Copying profile '{profile}': {profile_path} -> {dest_filename}")
                 sftp.put(profile_path, dest_filename.as_posix())
             if not self.args.profile_host:
                 dest_filename = remote_profile_path / "default" # in remote use "default" profile
-                sftp.put(self.conan_api.profiles.get_default_host(), dest_filename.as_posix())
+                default_host_profile = self.conan_api.profiles.get_default_host()
+                self.logger.debug(f"Copying default profile: {default_host_profile} -> {dest_filename}")
+                sftp.put(default_host_profile, dest_filename.as_posix())
         except IOError as e:
             raise ConanException(f"Unable to copy profiles to remote:\n{e}")
         finally:
@@ -244,7 +247,7 @@ class SSHRunner:
 
         _Path = pathlib.PureWindowsPath if self.is_remote_windows else pathlib.PurePath
         remote_json_output = _Path(self.remote_create_dir).joinpath("conan_create.json").as_posix()
-        command = f"{self.remote_conan} create {raw_args} --format json > {remote_json_output}"
+        command = f'{self.remote_conan} create {raw_args} --format json > {remote_json_output}'
 
         self.logger.status(f"Remote command: {command}", fg=Color.BRIGHT_MAGENTA)
 
@@ -319,8 +322,9 @@ class SSHRunner:
 
 class SSHOutput(ConanOutput):
     def __init__(self, hostname: str):
-        self.hostname = hostname
         super().__init__()
+        self.hostname = hostname
+        self.set_warnings_as_errors(True) # Make log errors blocker
 
     def _write_message(self, msg, fg=None, bg=None, newline=True):
         super()._write_message(f"===> SSH Runner ({self.hostname}): ", Color.BLACK,
