@@ -332,7 +332,9 @@ class RemoteConnection:
         channel = self.client.get_transport().open_session()
         if sys.stdout.isatty():
             width, height = os.get_terminal_size()
-            channel.get_pty(width=width, height=height)
+        else:
+            width, height = 80, 24
+        channel.get_pty(width=width, height=height)
 
         channel.exec_command(command)
         stdout = channel.makefile("r")
