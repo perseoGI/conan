@@ -265,9 +265,9 @@ class SSHOutput(ConanOutput):
 
 
 class RemoteConnection:
-    from paramiko.client import SSHClient
-    def __init__(self, client: SSHClient, logger: SSHOutput):
-        self.client = client
+    def __init__(self, client, logger: SSHOutput):
+        from paramiko.client import SSHClient
+        self.client: SSHClient = client
         self.logger = logger
 
     def put(self, src: str, dst: str) -> None:
