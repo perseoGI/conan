@@ -35,6 +35,7 @@ class SSHRunner:
         hostname = self._create_ssh_connection()
         self.logger = SSHOutput(hostname)
         self.logger.status(f"Connected to {hostname}", fg=Color.BRIGHT_MAGENTA)
+        self.remote_conn = RemoteConnection(self.client, self.logger)
 
     def run(self):
         self._ensure_runner_environment()
@@ -63,23 +64,23 @@ class SSHRunner:
 
     def _ensure_runner_environment(self):
         # Check python3 is available in remote host
-        if self._run_command("python3 --version").success:
+        if self.remote_conn.run_command("python3 --version").success:
             self.remote_python_command = "python3"
         else:
-            result = self._run_command("python --version")
+            result = self.remote_conn.run_command("python --version")
             if result.success and "Python 3" in result.stdout:
                 self.remote_python_command = "python"
             else:
                 self.logger.error("Unable to locate Python 3 executable in remote SSH environment")
 
         # Determine if remote host is Windows
-        result = self._run_command(f'{self.remote_python_command} -c "import os; print(os.name)"')
+        result = self.remote_conn.run_command(f'{self.remote_python_command} -c "import os; print(os.name)"')
         if not result.success:
             self.logger.error("Unable to determine remote OS type")
         self.is_remote_windows = result.stdout == "nt"
 
         # Get remote user home folder
-        result = self._run_command(f'{self.remote_python_command} -c "from pathlib import Path; print(Path.home())"')
+        result = self.remote_conn.run_command(f'{self.remote_python_command} -c "from pathlib import Path; print(Path.home())"')
         if not result.success:
             self.logger.error("Unable to determine remote home user folder")
         home_folder = result.stdout
@@ -95,7 +96,7 @@ class SSHRunner:
 
         # Ensure remote folders exist
         for folder in [remote_folder, remote_conan_home]:
-            if not self._run_command(f'{self.remote_python_command} -c "import os; os.makedirs(\'{folder}\', exist_ok=True)"').success:
+            if not self.remote_conn.run_command(f'{self.remote_python_command} -c "import os; os.makedirs(\'{folder}\', exist_ok=True)"').success:
                 self.logger.error(f"Unable to create remote workfolder at {folder}: {result.stderr}")
 
         # TODO: allow multiple venv given the client side conan version
@@ -111,15 +112,7 @@ class SSHRunner:
         self.logger.debug(f"Expected remote conan command: {conan_cmd}")
 
         # Check if remote Conan executable exists, otherwise invoke pip inside venv
-        sftp = self.client.open_sftp()
-        try:
-            sftp.stat(conan_cmd)
-            has_remote_conan = True
-        except FileNotFoundError:
-            has_remote_conan = False
-        finally:
-            sftp.close()
-
+        has_remote_conan = self.remote_conn.check_file_exists(conan_cmd)
 
         if self.is_remote_windows:
             python_command = remote_folder + "/venv" + "/Scripts" + "/python.exe"
@@ -128,12 +121,12 @@ class SSHRunner:
 
         if not has_remote_conan:
             self.logger.debug(f"Creating remote venv")
-            result = self._run_command(f"{self.remote_python_command} -m venv {conan_venv}")
+            result = self.remote_conn.run_command(f"{self.remote_python_command} -m venv {conan_venv}")
             if not result.success:
                 self.logger.error(f"Unable to create remote venv: {result.stderr}")
             self._install_conan_remotely(python_command, requested_conan_version)
         else:
-            version = self._run_command(f"{conan_cmd} --version").stdout
+            version = self.remote_conn.run_command(f"{conan_cmd} --version").stdout
             remote_conan_version = Version(version[version.rfind(" ")+1:])
             if requested_conan_version == "dev" and remote_conan_version.bump(1) == str(conan_version).replace("-dev", ""):
                 pass
@@ -146,7 +139,7 @@ class SSHRunner:
     def _install_conan_remotely(self, python_command: str, version: str):
         self.logger.debug(f"Installing conan version: {version}")
         # Note: this may fail on windows
-        result = self._run_command(f"{python_command} -m pip install conan{f'=={version}' if version != 'dev' else ' --upgrade'}")
+        result = self.remote_conn.run_command(f"{python_command} -m pip install conan{f'=={version}' if version != 'dev' else ' --upgrade'}")
         if not result.success:
             self.logger.error(f"Unable to install conan in venv: {result.stderr}")
 
@@ -161,55 +154,35 @@ class SSHRunner:
             # Wrapper script with environment variables preset
             env_lines = "\n".join([f"set {k}={v}" for k,v in remote_env.items()])
             conan_wrapper_contents = f"""@echo off\n{env_lines}\n{conan_cmd} %*\n"""
-            conan_wrapper = remote_folder + "/conan.bat"
         else:
             env_lines = "\n".join([f"export {k}={v}" for k,v in remote_env.items()])
             conan_wrapper_contents = f"""{env_lines}\n{conan_cmd}\n"""
-            conan_wrapper = remote_folder + "/conan.sh"
 
-        try:
-            sftp = self.client.open_sftp()
-            sftp.putfo(BytesIO(conan_wrapper_contents.encode()), conan_wrapper)
-        except:
-            raise ConanException("unable to set up Conan remote script")
-        finally:
-            sftp.close()
-        self.remote_conan = conan_wrapper
-
-        conan_config_home = self._run_command(f"{self.remote_conan} config home").stdout
+        self.remote_conan = self.remote_conn.create_remote_script(conan_wrapper_contents, remote_folder + "/conan", self.is_remote_windows)
+        conan_config_home = self.remote_conn.run_command(f"{self.remote_conan} config home").stdout
         self.logger.debug(f"Remote conan config home returned: {conan_config_home}")
-        if not self._run_command(f"{self.remote_conan} profile detect --force"):
+        if not self.remote_conn.run_command(f"{self.remote_conan} profile detect --force"):
             self.logger.error("Error creating default profile in remote machine")
 
 
     def _copy_profiles(self):
-        sftp = self.client.open_sftp()
-
         if not self.remote_conan_home:
             raise ConanException("Remote Conan home folder not set")
         remote_profile_path = Path(self.remote_conan_home) / "profiles"
         # If profile path does not exist, create the folder to avoid errors
-        try:
-            sftp.stat(remote_profile_path.as_posix())
-        except FileNotFoundError:
-            sftp.mkdir(remote_profile_path.as_posix())
-
-        try:
-            # Iterate over all profiles and copy using SFTP
-            for profile in set(self.args.profile_host + self.args.profile_build):
-                dest_filename = remote_profile_path / profile
-                profile_path = self.conan_api.profiles.get_path(profile)
-                self.logger.debug(f"Copying profile '{profile}': {profile_path} -> {dest_filename}")
-                sftp.put(profile_path, dest_filename.as_posix())
-            if not self.args.profile_host:
-                dest_filename = remote_profile_path / "default" # in remote use "default" profile
-                default_host_profile = self.conan_api.profiles.get_default_host()
-                self.logger.debug(f"Copying default profile: {default_host_profile} -> {dest_filename}")
-                sftp.put(default_host_profile, dest_filename.as_posix())
-        except IOError as e:
-            raise ConanException(f"Unable to copy profiles to remote:\n{e}")
-        finally:
-            sftp.close()
+        if not self.remote_conn.check_file_exists(remote_profile_path.as_posix()):
+            self.remote_conn.mkdir(remote_profile_path.as_posix())
+        # Iterate over all profiles and copy using sftp
+        for profile in set(self.args.profile_host + self.args.profile_build):
+            dest_filename = remote_profile_path / profile
+            profile_path = self.conan_api.profiles.get_path(profile)
+            self.logger.debug(f"Copying profile '{profile}': {profile_path} -> {dest_filename}")
+            self.remote_conn.put(profile_path, dest_filename.as_posix())
+        if not self.args.profile_host:
+            dest_filename = remote_profile_path / "default" # in remote use "default" profile
+            default_host_profile = self.conan_api.profiles.get_default_host()
+            self.logger.debug(f"Copying default profile: {default_host_profile} -> {dest_filename}")
+            self.remote_conn.put(default_host_profile, dest_filename.as_posix())
 
     def _copy_working_conanfile_path(self):
         resolved_path = Path(self.args.path).resolve()
@@ -221,58 +194,40 @@ class SSHRunner:
 
         # Create temporary destination directory
         temp_dir_create_cmd = f"""{self.remote_python_command} -c "import tempfile; print(tempfile.mkdtemp(dir='{self.remote_workspace}'))"""
-        result = self._run_command(temp_dir_create_cmd)
+        result = self.remote_conn.run_command(temp_dir_create_cmd)
         if not result.success or not result.stdout:
             self.logger.error(f"Unable to create remote temporary directory: {result.stderr}")
         self.remote_create_dir = result.stdout.replace("\\", '/')
 
         # Copy current folder to destination using sftp
         _Path = pathlib.PureWindowsPath if self.is_remote_windows else pathlib.PurePath
-        sftp = self.client.open_sftp()
         for root, dirs, files in os.walk(resolved_path.as_posix()):
             relative_root = Path(root).relative_to(resolved_path)
             for dir in dirs:
-                    dst = _Path(self.remote_create_dir).joinpath(relative_root).joinpath(dir).as_posix()
-                    sftp.mkdir(dst)
+                dst = _Path(self.remote_create_dir).joinpath(relative_root).joinpath(dir).as_posix()
+                self.remote_conn.mkdir(dst)
             for file in files:
                 orig = os.path.join(root, file)
                 dst = _Path(self.remote_create_dir).joinpath(relative_root).joinpath(file).as_posix()
-                sftp.put(orig, dst)
-        sftp.close()
+                self.remote_conn.put(orig, dst)
 
     def _remote_create(self):
         raw_args = self.raw_args
         raw_args[raw_args.index(self.args.path)] = self.remote_create_dir
         raw_args = " ".join(raw_args)
+        raw_args = raw_args.replace("&", '"&"').replace("*", '"*"')
 
         _Path = pathlib.PureWindowsPath if self.is_remote_windows else pathlib.PurePath
         remote_json_output = _Path(self.remote_create_dir).joinpath("conan_create.json").as_posix()
-        command = f'{self.remote_conan} create {raw_args} --format json > {remote_json_output}'
+        conan_create_cmd = f'{self.remote_conan} create {raw_args} --format json > {remote_json_output}'
+        script_path = _Path(self.remote_create_dir).joinpath("conan_create").as_posix()
+        self.remote_conn.create_remote_script(conan_create_cmd, script_path, self.is_remote_windows)
+        self.logger.status(f"Remote command: {conan_create_cmd}", fg=Color.BRIGHT_MAGENTA)
 
-        self.logger.status(f"Remote command: {command}", fg=Color.BRIGHT_MAGENTA)
-
-        stdout, _ = self._run_interactive_command(command)
-        first_line = True
-        while not stdout.channel.exit_status_ready():
-            line = stdout.channel.recv(1024)
-            if first_line and self.is_remote_windows:
-                # Avoid clearing and moving the cursor when the remote server is Windows
-                # https://github.com/PowerShell/Win32-OpenSSH/issues/1738#issuecomment-789434169
-                line = line.replace(b"\x1b[2J\x1b[m\x1b[H",b"")
-            sys.stdout.buffer.write(line)
-            sys.stdout.buffer.flush()
-            first_line = False
-
-        if stdout.channel.recv_exit_status() == 0:
+        if self.remote_conn.run_interactive_command(script_path, self.is_remote_windows):
             self._update_local_cache(remote_json_output)
 
         self.client.close()
-
-    class RunResult:
-        def __init__(self, success, stdout, stderr):
-            self.success = success
-            self.stdout = stdout
-            self.stderr = stderr
 
     def _update_local_cache(self, json_result: str):
         _Path = pathlib.PureWindowsPath if self.is_remote_windows else pathlib.PurePath
@@ -290,35 +245,12 @@ class SSHRunner:
         if stdout.channel.recv_exit_status() != 0:
             raise ConanException("Unable to save remote conan cache state")
 
-        sftp = self.client.open_sftp()
         with tempfile.TemporaryDirectory(delete=False) as tmp:
             local_cache_tgz = os.path.join(tmp, 'cache.tgz')
-            sftp.get(conan_cache_tgz, local_cache_tgz)
+            self.remote_conn.get(conan_cache_tgz, local_cache_tgz)
             self.logger.debug("Retrieved local cache: " + local_cache_tgz)
             self.conan_api.cache.restore(local_cache_tgz)
 
-    def _run_command(self, command: str) -> RunResult:
-        _, stdout, stderr = self.client.exec_command(command)
-        return SSHRunner.RunResult(stdout.channel.recv_exit_status() == 0,
-                                   stdout.read().decode().strip(),
-                      stderr.read().decode().strip())
-
-    def _run_interactive_command(self, command: str):
-        ''' Run a command in an SSH session.
-            When requesting a pseudo-terminal from the server,
-            ensure we pass width and height that matches the current
-            terminal
-        '''
-        channel = self.client.get_transport().open_session()
-        if sys.stdout.isatty():
-            width, height = os.get_terminal_size()
-            channel.get_pty(width=width, height=height)
-
-        channel.exec_command(command)
-
-        stdout = channel.makefile("r")
-        stderr = channel.makefile("r")
-        return stdout, stderr
 
 class SSHOutput(ConanOutput):
     def __init__(self, hostname: str):
@@ -331,3 +263,89 @@ class SSHOutput(ConanOutput):
                                Color.BRIGHT_YELLOW, newline=False)
         super()._write_message(msg, fg, bg, newline)
 
+
+class RemoteConnection:
+    from paramiko.client import SSHClient
+    def __init__(self, client: SSHClient, logger: SSHOutput):
+        self.client = client
+        self.logger = logger
+
+    def put(self, src: str, dst: str) -> None:
+        try:
+            sftp = self.client.open_sftp()
+            sftp.put(src, dst)
+            sftp.close()
+        except IOError as e:
+            self.logger.error(f"Unable to copy {src} to {dst}:\n{e}")
+
+    def get(self, src: str, dst: str) -> None:
+        try:
+            sftp = self.client.open_sftp()
+            sftp.get(src, dst)
+            sftp.close()
+        except IOError as e:
+            self.logger.error(f"Unable to copy from remote {src} to {dst}:\n{e}")
+
+    def mkdir(self, folder: str) -> None:
+        sftp = self.client.open_sftp()
+        sftp.mkdir(folder)
+        sftp.close()
+
+    def check_file_exists(self, file: str) -> bool:
+        try:
+            sftp = self.client.open_sftp()
+            sftp.stat(file)
+            sftp.close()
+            return True
+        except FileNotFoundError:
+            return False
+
+    def create_remote_script(self, script: str, script_path: str, is_remote_windows: bool) -> str:
+        script_path += ".bat" if is_remote_windows else ".sh"
+        try:
+            sftp = self.client.open_sftp()
+            sftp.putfo(BytesIO(script.encode()), script_path)
+            sftp.close()
+        except Exception as e:
+            self.logger.error(f"Unable to create remote script in {script_path}:\n{e}")
+        return script_path
+
+    class RunResult:
+        def __init__(self, success, stdout, stderr):
+            self.success = success
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def run_command(self, command: str) -> RunResult:
+        _, stdout, stderr = self.client.exec_command(command)
+        return RemoteConnection.RunResult(stdout.channel.recv_exit_status() == 0,
+                                   stdout.read().decode().strip(),
+                      stderr.read().decode().strip())
+
+    def run_interactive_command(self, command: str, is_remote_windows: bool) -> bool:
+        ''' Run a command in an SSH session.
+            When requesting a pseudo-terminal from the server,
+            ensure we pass width and height that matches the current
+            terminal
+            :return: True if the command succeeded
+        '''
+        channel = self.client.get_transport().open_session()
+        if sys.stdout.isatty():
+            width, height = os.get_terminal_size()
+            channel.get_pty(width=width, height=height)
+
+        channel.exec_command(command)
+        stdout = channel.makefile("r")
+
+        first_line = True
+        while not stdout.channel.exit_status_ready():
+            line = stdout.channel.recv(1024)
+            if first_line and is_remote_windows:
+                # Avoid clearing and moving the cursor when the remote server is Windows
+                # https://github.com/PowerShell/Win32-OpenSSH/issues/1738#issuecomment-789434169
+                line = line.replace(b"\x1b[2J\x1b[m\x1b[H",b"")
+            sys.stdout.buffer.write(line)
+            sys.stdout.buffer.flush()
+            first_line = False
+
+        return stdout.channel.recv_exit_status() == 0
