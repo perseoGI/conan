@@ -32,7 +32,10 @@ class SSHRunner:
         self.args = args
         self.raw_args = raw_args
 
-        hostname = self._create_ssh_connection()
+        try:
+            hostname = self._create_ssh_connection()
+        except Exception as e:
+            raise ConanException(f"Error creating SSH connection: {e}")
         self.logger = SSHOutput(hostname)
         self.logger.status(f"Connected to {hostname}", fg=Color.BRIGHT_MAGENTA)
         self.remote_conn = RemoteConnection(self.client, self.logger)
