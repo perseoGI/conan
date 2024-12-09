@@ -41,6 +41,7 @@ class SSHRunner:
         self.remote_conn = RemoteConnection(self.client, self.logger)
 
     def run(self):
+        self.logger.status(f"Copying profiles and recipe to host...", fg=Color.BRIGHT_MAGENTA)
         self._ensure_runner_environment()
         self._copy_profiles()
         self._copy_working_conanfile_path()
@@ -136,6 +137,9 @@ class SSHRunner:
             elif remote_conan_version != requested_conan_version:
                 self.logger.debug(f"Remote Conan version mismatch: {remote_conan_version} != {requested_conan_version}")
                 self._install_conan_remotely(python_command, requested_conan_version)
+
+        if not self.remote_conn.run_command(f"{conan_cmd} remote update conancenter --url='https://center2.conan.io'").success:
+            self.logger.error(f"Unable to update conancenter remote: {result.stderr}")
 
         self._create_remote_conan_wrapper(remote_conan_home, remote_folder, conan_cmd)
 
