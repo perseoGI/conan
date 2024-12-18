@@ -1,14 +1,7 @@
 name: OSX Tests
 
 on:
-  push:
-    branches:
-      - develop2
-      - release/*
-  pull_request:
-    branches:
-      - '*'
-      - 'release/*'
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
