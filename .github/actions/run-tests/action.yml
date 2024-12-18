@@ -1,0 +1,50 @@
+name: Test code and manage coverage
+
+inputs:
+  python-version:
+    description: "Python version to set up"
+    required: true
+
+  test-type:
+    description: "Tests type"
+    required: false
+
+  pytest-args:
+    description: "Pytest arguments"
+    required: false
+
+  run_shell:
+    description: "Shell to execute in"
+    default: "bash"
+
+runs:
+  using: "composite"
+  steps:
+      - name: Run tests
+        if: ${{ inputs.test-type != "" }}
+        shell: ${{ inputs.run_shell }}
+        run: |
+          pytest test/${{ inputs.test-type }} --durations=20 -n 4 --cov=conan
+
+      - name: Run tests
+        if: ${{ inputs.pytest-args != "" }}
+        shell: ${{ inputs.run_shell }}
+        run: |
+          pytest ${{ inputs.pytest-args }} --durations=20 -n 4 --cov=conan
+
+      - name: Rename coverage file (Linux/MacOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: mv .coverage .coverage.${{ runner.os }}-${{ inputs.python-version }}-${{ inputs.test-type }}
+
+      - name: Rename coverage file (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: powershell Rename-Item .coverage coverage-${{ runner.os }}-${{ inputs.python-version }}-${{ inputs.test-type }}.coverage
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: .coverage.${{ runner.os }}-${{ inputs.python-version }}-${{ inputs.test-type }}
+          path: .coverage.${{ runner.os }}-${{ inputs.python-version }}-${{ inputs.test-type }}
+          include-hidden-files: true

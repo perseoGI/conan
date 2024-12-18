@@ -1,0 +1,51 @@
+name: Configure python and run tests
+
+inputs:
+  python-version:
+    description: "Python version to set up"
+    required: true
+
+  pip-cache-path:
+    description: "Pip cache path"
+    required: true
+
+  use-pyenv:
+    description: "Use pyenv or standard python installer"
+    required: false
+    default: false
+
+  run_shell:
+    description: "Shell to execute in"
+    default: "bash"
+
+runs:
+  using: "composite"
+  steps:
+      - name: Set up Python ${{ inputs.python-version }}
+        if: inputs.use-pyenv == false
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Set up Python ${{ inputs.python-version }}
+        if: inputs.use-pyenv == true
+        shell: ${{ inputs.run_shell }}
+        run: |
+          pyenv global ${{ inputs.python-version }}
+          python --version
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.pip-cache-path }}
+          key: ${{ runner.os }}-pip-${{ inputs.python-version }}-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            pip-packages-${{ runner.os }}-${{ inputs.python-version }}-
+
+      - name: Install Python dependencies
+        shell: ${{ inputs.run_shell }}
+        run: |
+          pip install --upgrade pip
+          pip install -r conans/requirements.txt -r conans/requirements_dev.txt -r conans/requirements_server.txt
+          pip install -r conans/requirements_runner.txt # TODO parametrize
+          pip install meson
