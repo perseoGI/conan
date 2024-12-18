@@ -13,11 +13,11 @@ on:
 
 jobs:
     linux-tests:
-        uses: ./github/workflows/linux-tests.yml@test-main-workflow
+        uses: ./.github/workflows/linux-tests.yml@test-main-workflow
     osx-tests:
-        uses: ./github/workflows/osx-tests.yml@test-main-workflow
+        uses: ./.github/workflows/osx-tests.yml@test-main-workflow
     windows-tests:
-        uses: ./github/workflows/windows-tests.yml@test-main-workflow
+        uses: ./.github/workflows/windows-tests.yml@test-main-workflow
 
 
     final-job:
