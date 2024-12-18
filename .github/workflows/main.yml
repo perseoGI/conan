@@ -19,7 +19,7 @@ jobs:
     osx-tests:
         uses: ./.github/workflows/osx-tests.yml
     windows-tests:
-        uses: ./.github/workflows/windows-tests.yml
+        uses: ./.github/workflows/win-tests.yml
 
 
     final-job:
