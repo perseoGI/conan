@@ -383,7 +383,7 @@ def untargz(filename, destination=".", pattern=None, strip_root=False, extract_f
                 self.progress_printer = _ProgressPrinter(output, os.path.getsize(path))
             io.FileIO.__init__(self, path, *args, **kwargs)
 
-        def read(self, size: int = -1, /) -> bytes:
+        def read(self, size: int = -1) -> bytes:
             if output:
                 self.progress_printer.print_progress(self.tell())
             return io.FileIO.read(self, size)
