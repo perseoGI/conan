@@ -3,12 +3,13 @@ import os
 import platform
 import shutil
 import subprocess
-import sys
+import io
 from contextlib import contextmanager
 from fnmatch import fnmatch
 from shutil import which
 
 
+from conan.api.output import TimedOutput
 from conans.client.downloaders.caching_file_downloader import SourcesCachingDownloader
 from conan.errors import ConanException
 from conans.util.files import rmdir as _internal_rmdir, human_size, check_with_algorithm_sum
@@ -261,26 +262,6 @@ def chdir(conanfile, newdir):
     finally:
         os.chdir(old_path)
 
-
-class _ProgressPrinter:
-    def __init__(self, output, uncompressed_size: int, step: int = 1):
-        self.enabled = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
-        self.uncompressed_size = uncompressed_size
-        self.percentage = 0
-        self.step = step
-        self.output = output
-
-    def print_progress(self, current_size: int):
-        if not self.enabled:
-            return
-        txt_msg = "Unzipping %d %%"
-        current_percentage = int(current_size * 100.0 / self.uncompressed_size) if self.uncompressed_size != 0 else 0
-        if current_percentage >= self.percentage + self.step:
-            if 100 - current_percentage == self.step:
-                current_percentage = 100
-            self.output.rewrite_line(txt_msg % current_percentage)
-            self.percentage = current_percentage
-
 def unzip(conanfile, filename, destination=".", keep_permissions=False, pattern=None,
           strip_root=False, extract_filter=None):
     """
@@ -324,7 +305,7 @@ def unzip(conanfile, filename, destination=".", keep_permissions=False, pattern=
     import zipfile
     full_path = os.path.normpath(os.path.join(os.getcwd(), destination))
 
-    with zipfile.ZipFile(filename, "r") as z:
+    with zipfile.ZipFile(FileProgress(filename, msg="Unzipping", mode="r")) as z:
         zip_info = z.infolist()
         if pattern:
             zip_info = [zi for zi in zip_info if fnmatch(zi.filename, pattern)]
@@ -349,11 +330,9 @@ def unzip(conanfile, filename, destination=".", keep_permissions=False, pattern=
             output.info("Unzipping %s" % human_size(uncompress_size))
         extracted_size = 0
 
-        progress_printer = _ProgressPrinter(output, uncompress_size)
         if platform.system() == "Windows":
             for file_ in zip_info:
                 extracted_size += file_.file_size
-                progress_printer.print_progress(extracted_size)
                 try:
                     z.extract(file_, full_path)
                 except Exception as e:
@@ -361,7 +340,6 @@ def unzip(conanfile, filename, destination=".", keep_permissions=False, pattern=
         else:  # duplicated for, to avoid a platform check for each zipped file
             for file_ in zip_info:
                 extracted_size += file_.file_size
-                progress_printer.print_progress(extracted_size)
                 try:
                     z.extract(file_, full_path)
                     if keep_permissions:
@@ -376,19 +354,7 @@ def unzip(conanfile, filename, destination=".", keep_permissions=False, pattern=
 def untargz(filename, destination=".", pattern=None, strip_root=False, extract_filter=None, output=None):
     # NOT EXPOSED at `conan.tools.files` but used in tests
     import tarfile
-    import io
-    class ProgressFileObject(io.FileIO):
-        def __init__(self, path, *args, **kwargs):
-            if output:
-                self.progress_printer = _ProgressPrinter(output, os.path.getsize(path))
-            io.FileIO.__init__(self, path, *args, **kwargs)
-
-        def read(self, size: int = -1) -> bytes:
-            if output:
-                self.progress_printer.print_progress(self.tell())
-            return io.FileIO.read(self, size)
-
-    with tarfile.TarFile.open(fileobj=ProgressFileObject(filename), mode='r:*') as tarredgzippedFile:
+    with tarfile.TarFile.open(fileobj=FileProgress(filename, msg="Uncompressing"), mode='r:*') as tarredgzippedFile:
         f = getattr(tarfile, f"{extract_filter}_filter", None) if extract_filter else None
         tarredgzippedFile.extraction_filter = f or (lambda member_, _: member_)
         if not pattern and not strip_root:
@@ -568,3 +534,17 @@ def move_folder_contents(conanfile, src_folder, dst_folder):
         os.rmdir(src_folder)
     except OSError:
         pass
+
+
+class FileProgress(io.FileIO):
+    def __init__(self, path: str, msg: str = "Uploading", report_interval: float = 10, *args, **kwargs):
+        super().__init__(path, *args, **kwargs)
+        self._total_size = os.path.getsize(path)
+        self._filename = os.path.basename(path)
+        self._t = TimedOutput(interval=report_interval)
+        self.msg = msg
+
+    def read(self, size: int = -1) -> bytes:
+        current_percentage = int(self.tell() * 100.0 / self._total_size) if self._total_size != 0 else 0
+        self._t.info(f"{self.msg} {self._filename}: {current_percentage}%")
+        return super().read(size)
