@@ -1,4 +1,5 @@
 import sys
+from typing import Optional
 
 from conan.api.output import init_colorama
 from conan.api.subapi.cache import CacheAPI
@@ -26,7 +27,7 @@ from conans.model.version_range import validate_conan_version
 
 
 class ConanAPI:
-    def __init__(self, cache_folder=None):
+    def __init__(self, cache_folder: Optional[str]=None):
 
         version = sys.version_info
         if version.major == 2 or version.minor < 6:
