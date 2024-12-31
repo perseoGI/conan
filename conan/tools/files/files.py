@@ -3,15 +3,14 @@ import os
 import platform
 import shutil
 import subprocess
-import io
 from contextlib import contextmanager
 from fnmatch import fnmatch
 from shutil import which
 
 
-from conan.api.output import TimedOutput
 from conans.client.downloaders.caching_file_downloader import SourcesCachingDownloader
 from conan.errors import ConanException
+from conans.client.rest.file_uploader import FileProgress
 from conans.util.files import rmdir as _internal_rmdir, human_size, check_with_algorithm_sum
 
 
@@ -289,7 +288,7 @@ def unzip(conanfile, filename, destination=".", keep_permissions=False, pattern=
     if (filename.endswith(".tar.gz") or filename.endswith(".tgz") or
             filename.endswith(".tbz2") or filename.endswith(".tar.bz2") or
             filename.endswith(".tar")):
-        return untargz(filename, destination, pattern, strip_root, extract_filter, output)
+        return untargz(filename, destination, pattern, strip_root, extract_filter)
     if filename.endswith(".gz"):
         target_name = filename[:-3] if destination == "." else destination
         target_dir = os.path.dirname(target_name)
@@ -300,12 +299,12 @@ def unzip(conanfile, filename, destination=".", keep_permissions=False, pattern=
                 shutil.copyfileobj(fin, fout)
         return
     if filename.endswith(".tar.xz") or filename.endswith(".txz"):
-        return untargz(filename, destination, pattern, strip_root, extract_filter, output)
+        return untargz(filename, destination, pattern, strip_root, extract_filter)
 
     import zipfile
     full_path = os.path.normpath(os.path.join(os.getcwd(), destination))
 
-    with zipfile.ZipFile(FileProgress(filename, msg="Unzipping", mode="r")) as z:
+    with FileProgress(filename, msg="Unzipping", mode="r") as file, zipfile.ZipFile(file) as z:
         zip_info = z.infolist()
         if pattern:
             zip_info = [zi for zi in zip_info if fnmatch(zi.filename, pattern)]
@@ -351,10 +350,10 @@ def unzip(conanfile, filename, destination=".", keep_permissions=False, pattern=
                     output.error(f"Error extract {file_.filename}\n{str(e)}", error_type="exception")
         output.writeln("")
 
-def untargz(filename, destination=".", pattern=None, strip_root=False, extract_filter=None, output=None):
+def untargz(filename, destination=".", pattern=None, strip_root=False, extract_filter=None):
     # NOT EXPOSED at `conan.tools.files` but used in tests
     import tarfile
-    with tarfile.TarFile.open(fileobj=FileProgress(filename, msg="Uncompressing"), mode='r:*') as tarredgzippedFile:
+    with FileProgress(filename, msg="Uncompressing") as fileobj, tarfile.TarFile.open(fileobj=fileobj, mode='r:*') as tarredgzippedFile:
         f = getattr(tarfile, f"{extract_filter}_filter", None) if extract_filter else None
         tarredgzippedFile.extraction_filter = f or (lambda member_, _: member_)
         if not pattern and not strip_root:
@@ -534,17 +533,3 @@ def move_folder_contents(conanfile, src_folder, dst_folder):
         os.rmdir(src_folder)
     except OSError:
         pass
-
-
-class FileProgress(io.FileIO):
-    def __init__(self, path: str, msg: str = "Uploading", report_interval: float = 10, *args, **kwargs):
-        super().__init__(path, *args, **kwargs)
-        self._total_size = os.path.getsize(path)
-        self._filename = os.path.basename(path)
-        self._t = TimedOutput(interval=report_interval)
-        self.msg = msg
-
-    def read(self, size: int = -1) -> bytes:
-        current_percentage = int(self.tell() * 100.0 / self._total_size) if self._total_size != 0 else 0
-        self._t.info(f"{self.msg} {self._filename}: {current_percentage}%")
-        return super().read(size)

@@ -1,7 +1,8 @@
+import io
+import os
 import time
 
-from conan.api.output import ConanOutput
-from conan.tools.files.files import FileProgress
+from conan.api.output import ConanOutput, TimedOutput
 from conans.client.rest import response_to_str
 from conan.internal.errors import InternalErrorException, RequestErrorException, AuthenticationException, \
     ForbiddenException, NotFoundException
@@ -93,3 +94,17 @@ class FileUploader(object):
                 raise
             except Exception as exc:
                 raise ConanException(exc)
+
+
+class FileProgress(io.FileIO):
+    def __init__(self, path: str, msg: str = "Uploading", report_interval: float = 10, *args, **kwargs):
+        super().__init__(path, *args, **kwargs)
+        self._total_size = os.path.getsize(path)
+        self._filename = os.path.basename(path)
+        self._t = TimedOutput(interval=report_interval)
+        self.msg = msg
+
+    def read(self, size: int = -1) -> bytes:
+        current_percentage = int(self.tell() * 100.0 / self._total_size) if self._total_size != 0 else 0
+        self._t.info(f"{self.msg} {self._filename}: {current_percentage}%")
+        return super().read(size)
