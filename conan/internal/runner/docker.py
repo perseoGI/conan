@@ -4,7 +4,7 @@ import sys
 import json
 import platform
 import shutil
-from typing import Optional, NamedTuple
+from typing import Optional, NamedTuple, Dict, List
 import yaml
 from conan.api.conan_api import ConanAPI
 from conan.api.model import ListPattern
@@ -16,45 +16,40 @@ from conans.model.profile import Profile
 from conans.model.version import Version
 from pathlib import Path
 
+class _ContainerConfig(NamedTuple):
+    class Build(NamedTuple):
+        dockerfile: Optional[str] = None
+        build_context: Optional[str] = None
+        build_args: Optional[Dict[str, str]] = None
+        cache_from: Optional[List[str]] = None
+
+    class Run(NamedTuple):
+        name: Optional[str] = None
+        environment: Optional[Dict[str, str]] = None
+        user: Optional[str] = None
+        privileged: Optional[bool] = None
+        cap_add: Optional[List[str]] = None
+        security_opt: Optional[List[str]] = None
+        volumes: Optional[Dict[str, str]] = None
+        network: Optional[str] = None
+
+    image: Optional[str] = None
+    build: Build = Build()
+    run: Run = Run()
+
 
 class DockerRunner:
     def __init__(self, conan_api: ConanAPI, command: str, host_profile: Profile, build_profile: Profile, args: Namespace, raw_args: list[str]):
-        import docker
-        import docker.api.build
-        try:
-            docker_base_urls = [
-                None, # Default docker configuration, let the python library detect the socket
-                os.environ.get('DOCKER_HOST'), # Connect to socket defined in DOCKER_HOST
-                'unix:///var/run/docker.sock', # Default linux socket
-                f'unix://{os.path.expanduser("~")}/.rd/docker.sock' # Rancher linux socket
-            ]
-            for base_url in docker_base_urls:
-                try:
-                    ConanOutput().verbose(f'Trying to connect to docker "{base_url or "default"}" socket')
-                    self.docker_client = docker.DockerClient(base_url=base_url, version='auto')
-                    ConanOutput().verbose(f'Connected to docker "{base_url or "default"}" socket')
-                    break
-                except:
-                    continue
-            self.docker_api = self.docker_client.api
-            docker.api.build.process_dockerfile = lambda dockerfile, path: ('Dockerfile', dockerfile)
-        except:
-            raise ConanException("Docker Client failed to initialize."
-                                 "\n - Check if docker is installed and running"
-                                 "\n - Run 'pip install conan[runners]'")
+        self.docker_client = self._initialize_docker_client()
+        self.docker_api = self.docker_client.api
         self.conan_api = conan_api
         self.build_profile = build_profile
+        self.abs_host_path = self._get_abs_host_path(args.path)
         self.args = args
-        abs_path = make_abs_path(args.path)
-        if abs_path is None:
-            raise ConanException("Could not determine absolute path")
-        self.abs_host_path = Path(abs_path)
         if args.format:
             raise ConanException("format argument is forbidden if running in a docker runner")
 
-        # Container config
-        # https://containers.dev/implementors/json_reference/
-        self.configfile = self.config_parser(host_profile.runner.get('configfile'))
+        self.configfile = self._load_config(host_profile.runner.get('configfile'))
         self.dockerfile = host_profile.runner.get('dockerfile') or self.configfile.build.dockerfile
         self.docker_build_context = host_profile.runner.get('build_context') or self.configfile.build.build_context
         self.image = host_profile.runner.get('image') or self.configfile.image
@@ -64,9 +59,11 @@ class DockerRunner:
         self.name = self.configfile.run.name or f'conan-runner-{host_profile.runner.get("suffix", "docker")}'
         self.remove = str(host_profile.runner.get('remove', 'false')).lower() == 'true'
         self.cache = str(host_profile.runner.get('cache', 'clean'))
+        if self.cache not in ['clean', 'copy', 'shared']:
+            raise ConanException(f'Invalid cache value: "{self.cache}". Valid values are: clean, copy, shared')
         self.container = None
 
-        # Runner config>
+        # Runner config
         self.abs_runner_home_path = self.abs_host_path / '.conanrunner'
         self.docker_user_name = self.configfile.run.user or 'root'
         self.abs_docker_path = os.path.join(f'/{self.docker_user_name}/conanrunner', os.path.basename(self.abs_host_path)).replace("\\","/")
@@ -74,18 +71,18 @@ class DockerRunner:
         # Update conan command and some paths to run inside the container
         raw_args[raw_args.index(args.path)] = self.abs_docker_path
         self.command = ' '.join([f'conan {command}'] + [f'"{raw_arg}"' if ' ' in raw_arg else raw_arg for raw_arg in raw_args] + ['-f json > create.json'])
-        self.logger = DockerOutput(self.name)
+        self.logger = DockerRunner.Output(self.name)
 
     def run(self) -> None:
         """
         Run conan inside a Docker container
         """
-        self.build_image()
-        self.start_container()
+        self._build_image()
+        self._start_container()
         try:
-            self.init_container()
-            self.run_command(self.command)
-            self.update_local_cache()
+            self._init_container()
+            self._run_command(self.command)
+            self._update_local_cache()
         except RunnerException as e:
             raise ConanException(f'"{e.command}" inside docker fail'
                                  f'\n\nLast command output: {str(e.stdout_log)}')
@@ -99,12 +96,40 @@ class DockerRunner:
                     log('Removing container')
                     self.container.remove()
 
-    Build = NamedTuple('Build', [('dockerfile', Optional[str]), ('build_context', Optional[str]), ('build_args', Optional[dict]), ('cache_from', Optional[list])])
-    Run = NamedTuple('Run', [('name', Optional[str]), ('environment', Optional[dict]), ('user', Optional[str]), ('privileged', Optional[bool]), ('cap_add', Optional[list]), ('security_opt', Optional[list]), ('volumes', Optional[dict]), ('network', Optional[str])])
-    Conf = NamedTuple('Conf', [('image', Optional[str]), ('build', Build), ('run', Run)])
+    def _initialize_docker_client(self):
+        import docker
+        import docker.api.build
+
+        docker_base_urls = [
+            None,  # Default docker configuration
+            os.environ.get('DOCKER_HOST'),  # From DOCKER_HOST environment variable
+            'unix:///var/run/docker.sock',  # Default Linux socket
+            f'unix://{os.path.expanduser("~")}/.rd/docker.sock'  # Rancher Linux socket
+        ]
+
+        for base_url in docker_base_urls:
+            try:
+                ConanOutput().verbose(f'Trying to connect to Docker: "{base_url or "default"}"')
+                client = docker.DockerClient(base_url=base_url, version='auto')
+                ConanOutput().verbose(f'Connected to Docker: "{base_url or "default"}"')
+                docker.api.build.process_dockerfile = lambda dockerfile, path: ('Dockerfile', dockerfile)
+                return client
+            except Exception:
+                continue
+        raise ConanException("Docker Client failed to initialize."
+                             "\n - Check if docker is installed and running"
+                             "\n - Run 'pip install conan[runners]'")
+
+    def _get_abs_host_path(self, path: str) -> Path:
+        abs_path = make_abs_path(path)
+        if abs_path is None:
+            raise ConanException("Could not determine the absolute path.")
+        return Path(abs_path)
 
     @staticmethod
-    def config_parser(file_path: str) -> Conf:
+    def _load_config(file_path: Optional[str]) -> _ContainerConfig:
+        # Container config
+        # https://containers.dev/implementors/json_reference/
         if file_path:
             def _instans_or_error(value, obj):
                 if value and (not isinstance(value, obj)):
@@ -112,15 +137,15 @@ class DockerRunner:
                 return value
             with open(file_path, 'r') as f:
                 runnerfile = yaml.safe_load(f)
-            return DockerRunner.Conf(
+            return _ContainerConfig(
                 image=_instans_or_error(runnerfile.get('image'), str),
-                build=DockerRunner.Build(
+                build=_ContainerConfig.Build(
                     dockerfile=_instans_or_error(runnerfile.get('build', {}).get('dockerfile'), str),
                     build_context=_instans_or_error(runnerfile.get('build', {}).get('build_context'), str),
                     build_args=_instans_or_error(runnerfile.get('build', {}).get('build_args'), dict),
                     cache_from=_instans_or_error(runnerfile.get('build', {}).get('cacheFrom'), list),
                 ),
-                run=DockerRunner.Run(
+                run=_ContainerConfig.Run(
                     name=_instans_or_error(runnerfile.get('run', {}).get('name'), str),
                     environment=_instans_or_error(runnerfile.get('run', {}).get('containerEnv'), dict),
                     user=_instans_or_error(runnerfile.get('run', {}).get('containerUser'), str),
@@ -132,14 +157,9 @@ class DockerRunner:
                 )
             )
         else:
-            return DockerRunner.Conf(
-                image=None,
-                build=DockerRunner.Build(dockerfile=None, build_context=None, build_args=None, cache_from=None),
-                run=DockerRunner.Run(name=None, environment=None, user=None, privileged=None, cap_add=None,
-                        security_opt=None, volumes=None, network=None)
-            )
+            return _ContainerConfig()
 
-    def build_image(self) -> None:
+    def _build_image(self) -> None:
         if not self.dockerfile:
             return
         self.logger.status(f'Building the Docker image: {self.image}')
@@ -164,8 +184,8 @@ class DockerRunner:
                     if stream:
                         ConanOutput().status(stream.strip())
 
-    def start_container(self) -> None:
-        volumes, environment = self.create_runner_environment()
+    def _start_container(self) -> None:
+        volumes, environment = self._create_runner_environment()
         try:
             if self.docker_client.containers.list(all=True, filters={'name': self.name}):
                 self.logger.status('Starting the docker container', fg=Color.BRIGHT_MAGENTA)
@@ -195,7 +215,7 @@ class DockerRunner:
             raise ConanException(f'Imposible to run the container "{self.name}" with image "{self.image}"'
                                  f'\n\n{str(e)}')
 
-    def run_command(self, command: str, workdir: Optional[str] = None, log: bool = True) -> tuple[str, str]:
+    def _run_command(self, command: str, workdir: Optional[str] = None, log: bool = True) -> tuple[str, str]:
         workdir = workdir or self.abs_docker_path
         if log:
             self.logger.status(f'Running in container: "{command}"')
@@ -224,7 +244,7 @@ class DockerRunner:
             raise RunnerException(command=command, stdout_log=stdout_log, stderr_log=stderr_log)
         return stdout_log, stderr_log
 
-    def create_runner_environment(self) -> tuple[dict, dict]:
+    def _create_runner_environment(self) -> tuple[dict, dict]:
         shutil.rmtree(self.abs_runner_home_path, ignore_errors=True)
         volumes = {self.abs_host_path: {'bind': self.abs_docker_path, 'mode': 'rw'}}
         environment = {'CONAN_RUNNER_ENVIRONMENT': '1'}
@@ -250,35 +270,36 @@ class DockerRunner:
                 self.conan_api.cache.save(self.conan_api.list.select(ListPattern("*:*")), tgz_path)
         return volumes, environment
 
-    def init_container(self) -> None:
+    def _init_container(self) -> None:
         min_conan_version = '2.1'
-        stdout, _ = self.run_command('conan --version', log=True)
+        stdout, _ = self._run_command('conan --version', log=True)
         docker_conan_version = str(stdout.split('Conan version ')[1].replace('\n', '').replace('\r', '')) # Remove all characters and color
         if Version(docker_conan_version) <= Version(min_conan_version):
             raise ConanException(f'conan version inside the container must be greater than {min_conan_version}')
         if self.cache != 'shared':
-            self.run_command('mkdir -p ${HOME}/.conan2/profiles', log=False)
-            self.run_command('cp -r "'+self.abs_docker_path+'/.conanrunner/profiles/." ${HOME}/.conan2/profiles/.', log=False)
+            self._run_command('mkdir -p ${HOME}/.conan2/profiles', log=False)
+            self._run_command('cp -r "'+self.abs_docker_path+'/.conanrunner/profiles/." ${HOME}/.conan2/profiles/.', log=False)
+
             for file_name in ['global.conf', 'settings.yml', 'remotes.json']:
                 if os.path.exists( os.path.join(self.abs_runner_home_path, file_name)):
-                    self.run_command('cp "'+self.abs_docker_path+'/.conanrunner/'+file_name+'" ${HOME}/.conan2/'+file_name, log=False)
+                    self._run_command('cp "'+self.abs_docker_path+'/.conanrunner/'+file_name+'" ${HOME}/.conan2/'+file_name, log=False)
             if self.cache in ['copy']:
-                self.run_command('conan cache restore "'+self.abs_docker_path+'/.conanrunner/local_cache_save.tgz"')
+                self._run_command('conan cache restore "'+self.abs_docker_path+'/.conanrunner/local_cache_save.tgz"')
 
-    def update_local_cache(self) -> None:
+    def _update_local_cache(self) -> None:
         if self.cache != 'shared':
-            self.run_command('conan list --graph=create.json --graph-binaries=build --format=json > pkglist.json', log=False)
-            self.run_command('conan cache save --list=pkglist.json --file "'+self.abs_docker_path+'"/.conanrunner/docker_cache_save.tgz')
+            self._run_command('conan list --graph=create.json --graph-binaries=build --format=json > pkglist.json', log=False)
+            self._run_command('conan cache save --list=pkglist.json --file "'+self.abs_docker_path+'"/.conanrunner/docker_cache_save.tgz')
             tgz_path = os.path.join(self.abs_runner_home_path, 'docker_cache_save.tgz')
             self.logger.status(f'Restore host cache from: {tgz_path}')
             self.conan_api.cache.restore(tgz_path)
 
-class DockerOutput(ConanOutput):
-    def __init__(self, image: str):
-        super().__init__()
-        self.image = image
+    class Output(ConanOutput):
+        def __init__(self, image: str):
+            super().__init__()
+            self.image = image
 
-    def _write_message(self, msg, fg=None, bg=None, newline=True):
-        super()._write_message(f"===> Docker Runner ({self.image}): ", Color.BLACK,
-                               Color.BRIGHT_YELLOW, newline=False)
-        super()._write_message(msg, fg, bg, newline)
+        def _write_message(self, msg, fg=None, bg=None, newline=True):
+            super()._write_message(f"===> Docker Runner ({self.image}): ", Color.BLACK,
+                                   Color.BRIGHT_YELLOW, newline=False)
+            super()._write_message(msg, fg, bg, newline)
