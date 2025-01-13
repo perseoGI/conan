@@ -368,7 +368,7 @@ class TestLockUpgrade:
         ("build-requires", "cmake/1.0", "cmake/1.1"),
         ("python-requires", "mytool/1.0", "mytool/1.1"),
     ])
-    def test_lock_update(self, kind, old, new):
+    def test_lock_upgrade(self, kind, old, new):
         c = TestClient(light=True)
         lock = textwrap.dedent("""\
             {

@@ -190,16 +190,18 @@ def lock_upgrade(conan_api, parser, subparser, *args):
     References that matches the arguments package names will be replaced by the arguments.
     References can be supplied with and without revisions like "--requires=pkg/version",
     """
-    subparser.add_argument('--requires', action="append", help='Update references to lockfile.')
-    subparser.add_argument('--build-requires', action="append",
-                           help='Update build-requires from lockfile')
-    subparser.add_argument('--python-requires', action="append",
-                           help='Update python-requires from lockfile')
-    subparser.add_argument('--config-requires', action="append",
-                           help='Update config-requires from lockfile')
     common_graph_args(subparser)
+    subparser.add_argument('--update-requires', action="append",
+                           help='Update requires from lockfile')
+    subparser.add_argument('--update-build-requires', action="append",
+                           help='Update build-requires from lockfile')
+    subparser.add_argument('--update-python-requires', action="append",
+                           help='Update python-requires from lockfile')
+    subparser.add_argument('--update-config-requires', action="append",
+                           help='Update config-requires from lockfile')
     subparser.add_argument("--build-require", action='store_true', default=False,
                            help='Whether the provided reference is a build-require')
+
     args = parser.parse_args(*args)
 
     # parameter validation
@@ -212,11 +214,31 @@ def lock_upgrade(conan_api, parser, subparser, *args):
     lockfile = conan_api.lockfile.get_lockfile(lockfile=args.lockfile, conanfile_path=path,
                                                cwd=cwd, partial=True, overrides=overrides)
     profile_host, profile_build = conan_api.profiles.get_profiles_from_args(args)
-
-
-args = parser.parse_args(*args)
-
     lockfile = conan_api.lockfile.get_lockfile(lockfile=args.lockfile, partial=True)
-    lockfile.update(requires=args.requires, build_requires=args.build_requires,
-                    python_requires=args.python_requires, config_requires=args.config_requires)
-    conan_api.lockfile.save_lockfile(lockfile, args.lockfile_out)
+    # Remove the lockfile entries that will be updated
+    lockfile = conan_api.lockfile.remove_lockfile(lockfile,
+                                                  requires=args.update_requires,
+                                                  python_requires=args.update_python_requires,
+                                                  build_requires=args.update_build_requires,
+                                                  config_requires=args.update_config_requires)
+    # Resolve new graph
+    if path:
+        graph = conan_api.graph.load_graph_consumer(path, args.name, args.version,
+                                                    args.user, args.channel,
+                                                    profile_host, profile_build, lockfile,
+                                                    remotes, args.update,   # TODO: args.update should be True??
+                                                    is_build_require=args.build_require)
+    else:
+        graph = conan_api.graph.load_graph_requires(args.requires, args.tool_requires,
+                                                    profile_host, profile_build, lockfile,
+                                                    remotes, args.update)
+
+    print_graph_basic(graph)
+    graph.report_graph_error()
+    conan_api.graph.analyze_binaries(graph, args.build, remotes=remotes, update=args.update,
+                                     lockfile=lockfile)
+    print_graph_packages(graph)
+
+    lockfile = conan_api.lockfile.update_lockfile(lockfile, graph, args.lockfile_packages,
+                                                  clean=args.lockfile_clean)
+    conan_api.lockfile.save_lockfile(lockfile, args.lockfile_out or LOCKFILE)
