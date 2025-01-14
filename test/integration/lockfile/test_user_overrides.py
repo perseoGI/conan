@@ -363,33 +363,61 @@ class TestLockUpdate:
 
 
 class TestLockUpgrade:
-    @pytest.mark.parametrize("kind, old, new", [
-        ("requires", "math/*", "math/1.1"),
-        ("build-requires", "cmake/1.0", "cmake/1.1"),
-        ("python-requires", "mytool/1.0", "mytool/1.1"),
+    @pytest.mark.parametrize("kind, pkg, old, new", [
+        ("requires", "math", "math/1.0", "math/1.1"),
+        # ("build-requires", "cmake", "cmake/1.0", "cmake/1.1"),     # TODO there is not a --build-requires
+        # ("python-requires", "mytool", "mytool/1.0", "mytool/1.1"), # TODO nor a --python-requires
     ])
-    def test_lock_upgrade(self, kind, old, new):
+    def test_lock_upgrade(self, kind, pkg, old, new):
         c = TestClient(light=True)
-        lock = textwrap.dedent("""\
-            {
-                "version": "0.5",
-                "requires": [
-                    "math/1.0#85d927a4a067a531b1a9c7619522c015%1702683583.3411012",
-                    "math/1.0#12345%1702683584.3411012",
-                    "engine/1.0#fd2b006646a54397c16a1478ac4111ac%1702683583.3544693"
-                ],
-                "build_requires": [
-                    "cmake/1.0#85d927a4a067a531b1a9c7619522c015%1702683583.3411012",
-                    "ninja/1.0#fd2b006646a54397c16a1478ac4111ac%1702683583.3544693"
-                ],
-                "python_requires": [
-                    "mytool/1.0#85d927a4a067a531b1a9c7619522c015%1702683583.3411012",
-                    "othertool/1.0#fd2b006646a54397c16a1478ac4111ac%1702683583.3544693"
-                ]
-            }
-            """)
-        c.save({"conan.lock": lock})
-        c.run(f"lock upgrade --requires={old}")
+        c.save({f"{pkg}/conanfile.py": GenConanfile(pkg)})
+
+        c.run(f"export {pkg} --version=1.0")
+        rev0 = c.exported_recipe_revision()
+        c.run(f"lock create --{kind}={pkg}/[*]")
         lock = c.load("conan.lock")
-        assert old not in lock
-        assert new in lock
+        assert f"{old}#{rev0}" in lock
+
+        c.run(f"export {pkg} --version=1.1")
+        rev1 = c.exported_recipe_revision()
+        c.run(f"lock upgrade --{kind}={pkg}/[*] --update-{kind}={pkg}/[*]")
+        lock = c.load("conan.lock")
+        assert f"{old}#{rev0}" not in lock
+        assert f"{new}#{rev1}" in lock
+
+
+    def test_lock_upgrade_path(self):
+        c = TestClient(light=True)
+        c.save({"liba/conanfile.py": GenConanfile("liba"),
+                "libb/conanfile.py": GenConanfile("libb"),
+                "libc/conanfile.py": GenConanfile("libc")})
+        c.run(f"export liba --version=1.0")
+        c.run(f"export libb --version=1.0")
+        c.run(f"export libc --version=1.0")
+        c.save(
+            {
+                f"conanfile.py": GenConanfile()
+                .with_requires(f"liba/[>=1.0 <2]")
+                .with_requires("libb/[<1.2]")
+                .with_tool_requires("libc/1.0")
+            }
+        )
+
+        c.run("lock create .")
+        lock = c.load("conan.lock")
+        assert "liba/1.0" in lock
+        assert "libb/1.0" in lock
+        assert "libc/1.0" in lock
+
+        c.run(f"export liba --version=1.9")
+        c.run(f"export libb --version=1.1")
+        c.run(f"export libb --version=1.2")
+        c.run(f"export libc --version=1.1")
+        c.run("lock upgrade . --update-requires=liba/* --update-requires=libb/[*] --update-build-requires=libc/[*]")
+        # TODO not working with --update-requires=libb/1.1 should it?
+        lock = c.load("conan.lock")
+        assert "liba/1.9" in lock
+        assert "libb/1.1" in lock
+        assert "libc/1.0" in lock
+
+
