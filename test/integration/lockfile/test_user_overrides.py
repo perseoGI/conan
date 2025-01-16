@@ -4,7 +4,7 @@ import textwrap
 import pytest
 
 from conan.test.assets.genconanfile import GenConanfile
-from conan.test.utils.tools import TestClient
+from conan.test.utils.tools import NO_SETTINGS_PACKAGE_ID, TestClient
 
 
 def test_user_overrides():
@@ -420,4 +420,46 @@ class TestLockUpgrade:
         assert "libb/1.1" in lock
         assert "libc/1.0" in lock
 
+    def test_lock_upgrade_transitives(self):
+        c = TestClient(light=True)
+        c.save({"liba/conanfile.py": GenConanfile("liba"),
+                "libb/conanfile.py": GenConanfile("libb").with_requires("libc/[<2.0]"),
+                "libc/conanfile.py": GenConanfile("libc")})
+        c.run(f"export liba --version=1.0")
+        c.run(f"export libc --version=1.0")
+        c.run(f"create libb --version=1.0 --build=missing")
+        c.save(
+            {
+                f"conanfile.py": GenConanfile()
+                .with_requires(f"liba/[>=1.0 <2]")
+                .with_requires("libb/[<1.2]")
+            }
+        )
 
+        c.run("lock create .")
+        lock = c.load("conan.lock")
+        assert "liba/1.0" in lock
+        assert "libb/1.0" in lock
+        assert "libc/1.0" in lock
+
+        c.run(f"export libc --version=1.1")
+        c.save({"libb/conanfile.py": GenConanfile("libb").with_requires("libc/[>1.0]")})
+        c.run(f"create libb --version=1.1 --build=missing")
+        c.run("lock upgrade . --update-requires=libb/[*]")
+        lock = c.load("conan.lock")
+        assert "liba/1.0" in lock
+        assert "libb/1.1" in lock
+        assert "libc/1.1" in lock   # TODO
+
+        c.save({"libb/conanfile.py": GenConanfile("libb").with_requires("libc/[<2.0]").with_requires("libd/[<2.0]"),
+                "libd/conanfile.py": GenConanfile("libd")})
+
+        c.run(f"export libd --version=1.0")
+        c.run(f"create libb --version=1.1 --build=missing")
+        c.run("lock upgrade . --update-requires=libb/[*]")
+
+        lock = c.load("conan.lock")
+        assert "liba/1.0" in lock
+        assert "libb/1.1" in lock
+        assert "libc/1.0" in lock
+        assert "libd/1.0" in lock

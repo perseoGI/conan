@@ -60,7 +60,7 @@ def lock_create(conan_api, parser, subparser, *args):
                                                   clean=args.lockfile_clean)
     conanfile_path = os.path.dirname(graph.root.path) \
         if graph.root.path and args.lockfile_out is None else cwd
-    conan_api.lockfile.save_lockfile(lockfile, args.lockfile_out or LOCKFILE, conanfile_path)
+    conan_api.lockfile.save_lockfile(lockfile, args.lockfile_out or "conan.lock", conanfile_path)
 
 
 @conan_subcommand()
@@ -187,7 +187,7 @@ def lock_update(conan_api, parser, subparser, *args):
 @conan_subcommand()
 def lock_upgrade(conan_api, parser, subparser, *args):
     """
-    Upgrade requires, build-requires or python-requires from an existing lockfile given a conanfile
+    (Experimental) Upgrade requires, build-requires or python-requires from an existing lockfile given a conanfile
     or a reference.
     """
     common_graph_args(subparser)
@@ -244,4 +244,4 @@ def lock_upgrade(conan_api, parser, subparser, *args):
 
     lockfile = conan_api.lockfile.update_lockfile(lockfile, graph, args.lockfile_packages,
                                                   clean=args.lockfile_clean)
-    conan_api.lockfile.save_lockfile(lockfile, args.lockfile_out or LOCKFILE)
+    conan_api.lockfile.save_lockfile(lockfile, args.lockfile_out or "conan.lock")
