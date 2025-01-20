@@ -118,10 +118,6 @@ jobs:
         include:
         - test-type: unittests
           test-name: Unit
-        - test-type: integration
-          test-name: Integration
-        - test-type: functional
-          test-name: Functional
     name: ${{ matrix.test-name }} Tests (${{ matrix.python-version }})
     steps:
       - name: Checkout code
@@ -161,17 +157,14 @@ jobs:
       - name: Install homebrew dependencies
         run: |
           brew install xcodegen make libtool zlib autoconf automake ninja
-
-      - name: Run Tests
-        run: |
           export PATH=${HOME}/Applications/CMake/3.15.7/bin:$PATH:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
           cmake --version
           bazel --version
-          pytest test/${{ matrix.test-type }} --durations=20 -n auto ${{ env.PYTEST_COV_OPTIONS }}
 
-      - name: Code coverage
-        if: ${{ env.PYTEST_COV_OPTIONS }}
-        uses: ./.github/actions/code-coverage
+      - name: Run Tests
+        uses: ./.github/actions/test-coverage
         with:
           python-version: ${{ matrix.python-version }}
           test-type: ${{ matrix.test-type }}
+          tests: test/${{ matrix.test-type }}
+          duration: 20
