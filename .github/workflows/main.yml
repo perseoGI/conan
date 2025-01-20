@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PYTEST_COV_OPTIONS: ${{ github.ref_name == 'develop2' && '--cov=conan --cov-report=term-missing:skip-covered' || '' }}
+  PYTEST_COV_OPTIONS: ${{ github.ref == 'refs/heads/develop2' && '--cov=conan --cov-report=term-missing:skip-covered' || '' }}
 
 jobs:
   # linux_suite:
