@@ -12,7 +12,6 @@ inputs:
 
 runs:
   using: "composite"
-  if: github.ref == 'refs/heads/develop2'
   steps:
       - name: Rename coverage file (Linux/MacOS)
         if: runner.os != 'Windows'

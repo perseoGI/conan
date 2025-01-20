@@ -87,6 +87,7 @@ jobs:
           pytest test/${{ matrix.test-type }} --durations=20 -n auto ${{ env.PYTEST_COV_OPTIONS }}
 
       - name: Code coverage
+        if: ${{ env.PYTEST_COV_OPTIONS }}
         uses: ./.github/actions/code-coverage
         with:
           python-version: ${{ matrix.python-version }}
@@ -122,6 +123,7 @@ jobs:
           pytest -m docker_runner --durations=20 -rs ${{ env.PYTEST_COV_OPTIONS }}
 
       - name: Code coverage
+        if: ${{ env.PYTEST_COV_OPTIONS }}
         uses: ./.github/actions/code-coverage
         with:
           python-version: ${{ matrix.python-version }}

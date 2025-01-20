@@ -55,6 +55,7 @@ jobs:
           pytest test/unittests test/integration --durations=100 -n=auto ${{ env.PYTEST_COV_OPTIONS }}
 
       - name: Code coverage
+        if: ${{ env.PYTEST_COV_OPTIONS }}
         uses: ./.github/actions/code-coverage
         with:
           python-version: ${{ matrix.python-version }}
@@ -256,6 +257,7 @@ jobs:
           pytest test/functional -n=auto --durations=100 ${{ env.PYTEST_COV_OPTIONS }}
 
       - name: Code coverage
+        if: ${{ env.PYTEST_COV_OPTIONS }}
         uses: ./.github/actions/code-coverage
         with:
           python-version: ${{ matrix.python-version }}
