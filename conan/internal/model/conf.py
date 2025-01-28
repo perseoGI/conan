@@ -133,6 +133,10 @@ BUILT_IN_CONFS = {
     "tools.build:linker_scripts": "List of linker script files to pass to the linker used by different toolchains like CMakeToolchain, AutotoolsToolchain, and MesonToolchain",
     # Package ID composition
     "tools.info.package_id:confs": "List of existing configuration to be part of the package ID",
+    # Runners
+    "runner.type": "Type of runner to use. Possible values: docker, ssh",
+    "runner.host": "(SSH) Hostname of the remote machine to connect to",
+    "runner.use_ssh_config": "(SSH) (boolean) Enable the use of the SSH configuration file (False by default)",
 }
 
 BUILT_IN_CONFS = {key: value for key, value in sorted(BUILT_IN_CONFS.items())}
