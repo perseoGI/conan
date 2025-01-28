@@ -12,9 +12,9 @@ from conan.api.output import Color, ConanOutput
 from conan.cli import make_abs_path
 from conan.internal.runner import RunnerException
 from conan.errors import ConanException
-from conans.model.profile import Profile
-from conans.model.version import Version
 from pathlib import Path
+from conan.internal.model.profile import Profile
+from conan.internal.model.version import Version
 
 class _ContainerConfig(NamedTuple):
     class Build(NamedTuple):
