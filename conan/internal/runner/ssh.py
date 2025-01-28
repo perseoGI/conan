@@ -41,7 +41,6 @@ class SSHRunner:
         self.remote_conn = RemoteConnection(self.client, self.logger)
 
     def run(self):
-        self.logger.status(f"Copying profiles and recipe to host...", fg=Color.BRIGHT_MAGENTA)
         self._ensure_runner_environment()
         self._copy_profiles()
         self._copy_working_conanfile_path()
@@ -51,11 +50,17 @@ class SSHRunner:
         from paramiko.config import SSHConfig
         from paramiko.client import SSHClient
 
-        hostname = self.host_profile.runner.get("host")
+        hostname = self.host_profile.runner.get("ssh.host")
         if not hostname:
-            raise ConanException("Host not specified in runner configuration")
-        if self.host_profile.runner.get('use_ssh_config', False):
-            ssh_config_file = Path.home() / ".ssh" / "config"
+            raise ConanException("Host not specified in runner.ssh configuration")
+        configfile = self.host_profile.runner.get("configfile", False)
+        if configfile:
+            if isinstance(configfile, bool):
+                ssh_config_file = Path.home() / ".ssh" / "config"
+            elif isinstance(configfile, str):
+                ssh_config_file = Path(configfile)
+            else:
+                raise ConanException("Invalid value for runner.ssh.configfile. Should be a string or boolean")
             if not ssh_config_file.exists():
                 raise ConanException(f"SSH config file not found at {ssh_config_file}")
             ssh_config = SSHConfig.from_file(open(ssh_config_file))
@@ -96,7 +101,7 @@ class SSHRunner:
         remote_conan_home = Path(home_folder) / ".conan2remote" / "conanhome"
         remote_conan_home = remote_conan_home.as_posix().replace("\\", "/")
         self.remote_conan_home = remote_conan_home
-        self.logger.debug(f"Remote workfolder: {remote_folder}")
+        self.logger.verbose(f"Remote workfolder: {remote_folder}")
 
         # Ensure remote folders exist
         for folder in [remote_folder, remote_conan_home]:
@@ -112,8 +117,8 @@ class SSHRunner:
         else:
             conan_cmd = remote_folder + "/venv/bin/conan"
 
-        self.logger.debug(f"Expected remote conan home: {remote_conan_home}")
-        self.logger.debug(f"Expected remote conan command: {conan_cmd}")
+        self.logger.verbose(f"Expected remote conan home: {remote_conan_home}")
+        self.logger.verbose(f"Expected remote conan command: {conan_cmd}")
 
         # Check if remote Conan executable exists, otherwise invoke pip inside venv
         has_remote_conan = self.remote_conn.check_file_exists(conan_cmd)
@@ -124,7 +129,7 @@ class SSHRunner:
             python_command = remote_folder + "/venv" + "/bin" + "/python"
 
         if not has_remote_conan:
-            self.logger.debug(f"Creating remote venv")
+            self.logger.verbose(f"Creating remote venv")
             result = self.remote_conn.run_command(f"{self.remote_python_command} -m venv {conan_venv}")
             if not result.success:
                 self.logger.error(f"Unable to create remote venv: {result.stderr}")
@@ -135,7 +140,7 @@ class SSHRunner:
             if requested_conan_version == "dev" and remote_conan_version.bump(1) == str(conan_version).replace("-dev", ""):
                 pass
             elif remote_conan_version != requested_conan_version:
-                self.logger.debug(f"Remote Conan version mismatch: {remote_conan_version} != {requested_conan_version}")
+                self.logger.verbose(f"Remote Conan version mismatch: {remote_conan_version} != {requested_conan_version}")
                 self._install_conan_remotely(python_command, requested_conan_version)
 
         if not self.remote_conn.run_command(f"{conan_cmd} remote update conancenter --url='https://center2.conan.io'").success:
@@ -144,7 +149,7 @@ class SSHRunner:
         self._create_remote_conan_wrapper(remote_conan_home, remote_folder, conan_cmd)
 
     def _install_conan_remotely(self, python_command: str, version: str):
-        self.logger.debug(f"Installing conan version: {version}")
+        self.logger.verbose(f"Installing conan version: {version}")
         # Note: this may fail on windows
         result = self.remote_conn.run_command(f"{python_command} -m pip install conan{f'=={version}' if version != 'dev' else ' --upgrade'}")
         if not result.success:
@@ -167,12 +172,13 @@ class SSHRunner:
 
         self.remote_conan = self.remote_conn.create_remote_script(conan_wrapper_contents, remote_folder + "/conan", self.is_remote_windows)
         conan_config_home = self.remote_conn.run_command(f"{self.remote_conan} config home").stdout
-        self.logger.debug(f"Remote conan config home returned: {conan_config_home}")
+        self.logger.verbose(f"Remote conan config home returned: {conan_config_home}")
         if not self.remote_conn.run_command(f"{self.remote_conan} profile detect --force"):
             self.logger.error("Error creating default profile in remote machine")
 
 
     def _copy_profiles(self):
+        self.logger.status(f"Copying profiles and recipe to host...", fg=Color.BRIGHT_MAGENTA)
         if not self.remote_conan_home:
             raise ConanException("Remote Conan home folder not set")
         remote_profile_path = Path(self.remote_conan_home) / "profiles"
@@ -183,12 +189,12 @@ class SSHRunner:
         for profile in set(self.args.profile_host + self.args.profile_build):
             dest_filename = remote_profile_path / profile
             profile_path = self.conan_api.profiles.get_path(profile)
-            self.logger.debug(f"Copying profile '{profile}': {profile_path} -> {dest_filename}")
+            self.logger.verbose(f"Copying profile '{profile}': {profile_path} -> {dest_filename}")
             self.remote_conn.put(profile_path, dest_filename.as_posix())
         if not self.args.profile_host:
             dest_filename = remote_profile_path / "default" # in remote use "default" profile
             default_host_profile = self.conan_api.profiles.get_default_host()
-            self.logger.debug(f"Copying default profile: {default_host_profile} -> {dest_filename}")
+            self.logger.verbose(f"Copying default profile: {default_host_profile} -> {dest_filename}")
             self.remote_conn.put(default_host_profile, dest_filename.as_posix())
 
     def _copy_working_conanfile_path(self):
@@ -246,7 +252,7 @@ class SSHRunner:
             raise ConanException("Unable to generate remote package list")
 
         conan_cache_tgz = _Path(self.remote_create_dir).joinpath("cache.tgz").as_posix()
-        self.logger.debug("Remote cache tgz: " + conan_cache_tgz)
+        self.logger.verbose("Remote cache tgz: " + conan_cache_tgz)
         cache_save_command = f"{self.remote_conan} cache save --list {pkg_list_json} --file {conan_cache_tgz}"
         _, stdout, _ = self.client.exec_command(cache_save_command)
         if stdout.channel.recv_exit_status() != 0:
@@ -255,7 +261,7 @@ class SSHRunner:
         with tempfile.TemporaryDirectory(delete=False) as tmp:
             local_cache_tgz = os.path.join(tmp, 'cache.tgz')
             self.remote_conn.get(conan_cache_tgz, local_cache_tgz)
-            self.logger.debug("Retrieved local cache: " + local_cache_tgz)
+            self.logger.verbose("Retrieved local cache: " + local_cache_tgz)
             self.conan_api.cache.restore(local_cache_tgz)
 
 
