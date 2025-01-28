@@ -22,6 +22,7 @@ class _ContainerConfig(NamedTuple):
         build_context: Optional[str] = None
         build_args: Optional[Dict[str, str]] = None
         cache_from: Optional[List[str]] = None
+        platform: Optional[str] = None
 
     class Run(NamedTuple):
         name: Optional[str] = None
@@ -52,6 +53,7 @@ class DockerRunner:
         self.configfile = self._load_config(host_profile.runner.get('docker.configfile'))
         self.dockerfile = host_profile.runner.get('docker.dockerfile') or self.configfile.build.dockerfile
         self.docker_build_context = host_profile.runner.get('docker.build_context') or self.configfile.build.build_context
+        self.platform = host_profile.runner.get('docker.platform') or self.configfile.build.platform
         self.image = host_profile.runner.get('docker.image') or self.configfile.image
         if not (self.dockerfile or self.image):
             raise ConanException("'dockerfile' or docker image name is needed")
@@ -144,6 +146,7 @@ class DockerRunner:
                     build_context=_instans_or_error(runnerfile.get('build', {}).get('build_context'), str),
                     build_args=_instans_or_error(runnerfile.get('build', {}).get('build_args'), dict),
                     cache_from=_instans_or_error(runnerfile.get('build', {}).get('cacheFrom'), list),
+                    platform=_instans_or_error(runnerfile.get('build', {}).get('platform'), str),
                 ),
                 run=_ContainerConfig.Run(
                     name=_instans_or_error(runnerfile.get('run', {}).get('name'), str),
@@ -174,6 +177,7 @@ class DockerRunner:
                 path=build_path,
                 dockerfile=f.read(),
                 tag=self.image,
+                platform=self.configfile.build.platform,
                 buildargs=self.configfile.build.build_args,
                 cache_from=self.configfile.build.cache_from,
             )

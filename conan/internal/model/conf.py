@@ -142,6 +142,7 @@ BUILT_IN_CONFS = {
     "runner.docker.remove": "(boolean) Remove the container after running the Conan command",
     "runner.docker.configfile": "Path to a configuration file with extra parameters (https://containers.dev/implementors/json_reference/#image-specific)",
     "runner.docker.build_context": "Docker build context",
+    "runner.docker.platform": "Docker platform to build the image for, e.g. 'linux/amd64'",
 }
 
 BUILT_IN_CONFS = {key: value for key, value in sorted(BUILT_IN_CONFS.items())}
