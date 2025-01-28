@@ -12,8 +12,8 @@ from io import BytesIO
 import sys
 
 from conan import conan_version
-from conan.tools.scm import Version
-from conans.model.profile import Profile
+from conan.internal.model.version import Version
+from conan.internal.model.profile import Profile
 
 class SSHRunner:
     def __init__(
