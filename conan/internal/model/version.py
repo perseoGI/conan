@@ -199,6 +199,4 @@ class Version:
         """ Check if the version is in the specified range """
         from conan.internal.model.version_range import VersionRange
         # This check could be moved to VersionRange constructor
-        if version_range.startswith("[") and version_range.endswith("]"):
-            version_range = version_range[1:-1]
         return VersionRange(version_range).contains(self, resolve_prerelease=resolve_prerelease)

@@ -160,9 +160,7 @@ def test_elem_comparison():
 def test_version_in_range():
     v = Version("1.0")
     assert not v.in_range(">1.0 <2")
-    assert not v.in_range("[>1.0 <2]")
     assert v.in_range(">=1.0 <2")
-    assert v.in_range("[>=1.0 <2]")
 
     assert not Version("1.0-rc").in_range(">=1.0 <2.0")
     assert Version("1.0-rc").in_range(">=1.0 <2.0", resolve_prerelease=True)
