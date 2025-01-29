@@ -168,7 +168,7 @@ class SSHRunner:
             conan_wrapper_contents = f"""@echo off\n{env_lines}\n{conan_cmd} %*\n"""
         else:
             env_lines = "\n".join([f"export {k}={v}" for k,v in remote_env.items()])
-            conan_wrapper_contents = f"""{env_lines}\n{conan_cmd}\n"""
+            conan_wrapper_contents = f"""{env_lines}\n{conan_cmd} $@\n"""
 
         self.remote_conan = self.remote_conn.create_remote_script(conan_wrapper_contents, remote_folder + "/conan", self.is_remote_windows)
         conan_config_home = self.remote_conn.run_command(f"{self.remote_conan} config home").stdout
@@ -206,7 +206,7 @@ class SSHRunner:
             return ConanException("Error determining conanfile directory")
 
         # Create temporary destination directory
-        temp_dir_create_cmd = f"""{self.remote_python_command} -c "import tempfile; print(tempfile.mkdtemp(dir='{self.remote_workspace}'))"""
+        temp_dir_create_cmd = f"""{self.remote_python_command} -c "import tempfile; print(tempfile.mkdtemp(dir='{self.remote_workspace}'))" """
         result = self.remote_conn.run_command(temp_dir_create_cmd)
         if not result.success or not result.stdout:
             self.logger.error(f"Unable to create remote temporary directory: {result.stderr}")
@@ -234,7 +234,7 @@ class SSHRunner:
         remote_json_output = _Path(self.remote_create_dir).joinpath("conan_create.json").as_posix()
         conan_create_cmd = f'{self.remote_conan} create {raw_args} --format json > {remote_json_output}'
         script_path = _Path(self.remote_create_dir).joinpath("conan_create").as_posix()
-        self.remote_conn.create_remote_script(conan_create_cmd, script_path, self.is_remote_windows)
+        script_path = self.remote_conn.create_remote_script(conan_create_cmd, script_path, self.is_remote_windows)
         self.logger.status(f"Remote command: {conan_create_cmd}", fg=Color.BRIGHT_MAGENTA)
 
         if self.remote_conn.run_interactive_command(script_path, self.is_remote_windows):
@@ -272,8 +272,8 @@ class SSHOutput(ConanOutput):
         self.set_warnings_as_errors(True) # Make log errors blocker
 
     def _write_message(self, msg, fg=None, bg=None, newline=True):
-        super()._write_message(f"===> SSH Runner ({self.hostname}): ", Color.BLACK,
-                               Color.BRIGHT_YELLOW, newline=False)
+        # super()._write_message(f"===> SSH Runner ({self.hostname}): ", Color.BLACK, Color.BRIGHT_YELLOW, newline=False)
+        super()._write_message(f"({self.hostname}) | ", Color.BLACK, Color.BRIGHT_YELLOW, newline=False)
         super()._write_message(msg, fg, bg, newline)
 
 
@@ -318,6 +318,7 @@ class RemoteConnection:
         try:
             sftp = self.client.open_sftp()
             sftp.putfo(BytesIO(script.encode()), script_path)
+            sftp.chmod(script_path, 0o755)
             sftp.close()
         except Exception as e:
             self.logger.error(f"Unable to create remote script in {script_path}:\n{e}")
@@ -352,6 +353,7 @@ class RemoteConnection:
         channel.exec_command(command)
         stdout = channel.makefile("r")
 
+        log = []
         first_line = True
         while not stdout.channel.exit_status_ready():
             line = stdout.channel.recv(1024)
@@ -359,8 +361,23 @@ class RemoteConnection:
                 # Avoid clearing and moving the cursor when the remote server is Windows
                 # https://github.com/PowerShell/Win32-OpenSSH/issues/1738#issuecomment-789434169
                 line = line.replace(b"\x1b[2J\x1b[m\x1b[H",b"")
-            sys.stdout.buffer.write(line)
-            sys.stdout.buffer.flush()
-            first_line = False
-
+                first_line = False
+            # sys.stdout.buffer.write(line)
+            # sys.stdout.buffer.flush()
+            line = line.decode('utf-8', errors='ignore')
+            line = remove_cursor_movements(line)
+            for l in line.splitlines():
+                log.append(l)
+                # if l != "" and l != "\r" and l != "\r\n":
+                self.logger.status(l)
+        # for l in log:
+        #     self.logger.status(l)
         return stdout.channel.recv_exit_status() == 0
+
+import re
+def remove_cursor_movements(text):
+    # Regex pattern to match cursor movement escape sequences (e.g., \x1b[13;1H)
+    cursor_movement_pattern = re.compile(r'\x1b\[\d+;\d+H')
+
+    # Remove cursor movements from the text
+    return cursor_movement_pattern.sub('\n', text)
