@@ -198,5 +198,4 @@ class Version:
     def in_range(self, version_range: str, resolve_prerelease: Optional[bool] = None):
         """ Check if the version is in the specified range """
         from conan.internal.model.version_range import VersionRange
-        # This check could be moved to VersionRange constructor
         return VersionRange(version_range).contains(self, resolve_prerelease=resolve_prerelease)
