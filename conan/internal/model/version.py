@@ -195,11 +195,10 @@ class Version:
             else:  # None of them is pre-release
                 return (self._nonzero_items, self._build) < (other._nonzero_items, other._build)
 
-    def version_in(self, version_range, resolve_prerelease: Optional[bool] = None):
+    def in_range(self, version_range: str, resolve_prerelease: Optional[bool] = None):
+        """ Check if the version is in the specified range """
         from conan.internal.model.version_range import VersionRange
-        if not isinstance(version_range, VersionRange):
-            # This check could be moved to VersionRange constructor
-            if version_range.startswith("[") and version_range.endswith("]"):
-                version_range = version_range[1:-1]
-            version_range = VersionRange(version_range)
-        return version_range.contains(self, resolve_prerelease=resolve_prerelease)
+        # This check could be moved to VersionRange constructor
+        if version_range.startswith("[") and version_range.endswith("]"):
+            version_range = version_range[1:-1]
+        return VersionRange(version_range).contains(self, resolve_prerelease=resolve_prerelease)
