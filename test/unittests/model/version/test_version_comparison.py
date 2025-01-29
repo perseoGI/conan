@@ -1,6 +1,7 @@
 import pytest
 
 from conan.internal.model.version import Version
+from conan.internal.model.version_range import VersionRange
 
 v = [("1", "2"),
      ("1.0", "1.1"),
@@ -155,3 +156,13 @@ def test_elem_comparison():
     assert micro > 3
     assert micro < 5
     assert micro == 4
+
+def test_version_in():
+    v = Version("1.0")
+    assert not v.version_in(">1.0 <2")
+    assert not v.version_in("[>1.0 <2]")
+    assert v.version_in(">=1.0 <2")
+    assert v.version_in("[>=1.0 <2]")
+
+    assert not Version("1.0-rc").version_in(">=1.0 <2.0")
+    assert Version("1.0-rc").version_in(">=1.0 <2.0", resolve_prerelease=True)

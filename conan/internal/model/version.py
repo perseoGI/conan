@@ -1,4 +1,5 @@
 from functools import total_ordering
+from typing import Optional
 
 from conan.errors import ConanException
 
@@ -193,3 +194,12 @@ class Version:
                     return self._nonzero_items < other._nonzero_items
             else:  # None of them is pre-release
                 return (self._nonzero_items, self._build) < (other._nonzero_items, other._build)
+
+    def version_in(self, version_range, resolve_prerelease: Optional[bool] = None):
+        from conan.internal.model.version_range import VersionRange
+        if not isinstance(version_range, VersionRange):
+            # This check could be moved to VersionRange constructor
+            if version_range.startswith("[") and version_range.endswith("]"):
+                version_range = version_range[1:-1]
+            version_range = VersionRange(version_range)
+        return version_range.contains(self, resolve_prerelease=resolve_prerelease)
