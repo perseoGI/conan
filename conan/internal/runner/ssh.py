@@ -4,7 +4,7 @@ import pathlib
 import tempfile
 
 from conan.api.conan_api import ConanAPI
-from conan.api.output import Color
+from conan.api.output import Color, ConanOutput
 from conan.errors import ConanException
 
 import os
@@ -38,9 +38,11 @@ class SSHRunner:
             hostname = self._create_ssh_connection()
         except Exception as e:
             raise ConanException(f"Error creating SSH connection: {e}")
-        self.logger = RunnerOutput(hostname)
+        self.logger = ConanOutput()
+        self.logger.set_warnings_as_errors(True)
+        self.runner_logger = RunnerOutput(hostname)
         self.logger.status(f"Connected to {hostname}", fg=Color.BRIGHT_MAGENTA)
-        self.remote_conn = RemoteConnection(self.client, self.logger)
+        self.remote_conn = RemoteConnection(self.client, self.runner_logger)
 
     def run(self):
         self._ensure_runner_environment()
@@ -136,7 +138,7 @@ class SSHRunner:
                 self.logger.error(f"Unable to create remote venv: {result.stderr}")
             self._install_conan_remotely(python_command, requested_conan_version)
         else:
-            version = self.remote_conn.run_command(f"{conan_cmd} --version").stdout
+            version = self.remote_conn.run_command(f"{conan_cmd} --version", verbose=True).stdout
             remote_conan_version = Version(version[version.rfind(" ")+1:])
             if requested_conan_version == "dev" and remote_conan_version.bump(1) == str(conan_version).replace("-dev", ""):
                 pass
@@ -172,8 +174,7 @@ class SSHRunner:
             conan_wrapper_contents = f"""{env_lines}\n{conan_cmd} $@\n"""
 
         self.remote_conan = self.remote_conn.create_remote_script(conan_wrapper_contents, remote_folder + "/conan", self.is_remote_windows)
-        conan_config_home = self.remote_conn.run_command(f"{self.remote_conan} config home").stdout
-        self.logger.verbose(f"Remote conan config home returned: {conan_config_home}")
+        self.remote_conn.run_command(f"{self.remote_conan} config home", verbose=True)
         if not self.remote_conn.run_command(f"{self.remote_conan} profile detect --force"):
             self.logger.error("Error creating default profile in remote machine")
 
@@ -319,11 +320,15 @@ class RemoteConnection:
             self.stdout = stdout
             self.stderr = stderr
 
-    def run_command(self, command: str) -> RunResult:
+    def run_command(self, command: str, verbose: bool = False) -> RunResult:
         _, stdout, stderr = self.client.exec_command(command)
-        return RemoteConnection.RunResult(stdout.channel.recv_exit_status() == 0,
-                                   stdout.read().decode().strip(),
-                      stderr.read().decode().strip())
+        log = self.logger.status if verbose else self.logger.verbose
+        log(f'$ {command}', fg=Color.BLUE)
+        result = RemoteConnection.RunResult(stdout.channel.recv_exit_status() == 0,
+                                            stdout.read().decode().strip(),
+                                            stderr.read().decode().strip())
+        log(f"{result.stdout}")
+        return result
 
     def run_interactive_command(self, command: str, is_remote_windows: bool) -> bool:
         ''' Run a command in an SSH session.
@@ -366,6 +371,5 @@ class RemoteConnection:
             # sys.stdout.buffer.write(line)
             # sys.stdout.buffer.flush()
             line = remove_cursor_movements(line.replace(b'\r', b'').decode(errors='ignore').strip())
-            for l in line.splitlines():
-                self.logger.status(l)
+            self.logger.status(line)
         return stdout.channel.recv_exit_status() == 0

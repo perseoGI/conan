@@ -44,7 +44,6 @@ jobs:
   linux_tests:
     needs: build_container
     runs-on: ubuntu-latest
-    if: false
     container:
       image: ghcr.io/${{ github.repository_owner }}/conan-tests:${{ needs.build_container.outputs.image_tag }}
       options: --user conan
@@ -128,10 +127,6 @@ jobs:
           ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa
           cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
           chmod 600 ~/.ssh/authorized_keys
-          ssh-keyscan localhost >> ~/.ssh/known_hosts
-
-      - name: Test SSH Connection
-        run: ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no localhost "echo 'SSH Connection Successful!'"
 
       - name: Run runner tests
         uses: ./.github/actions/test-coverage
