@@ -4,16 +4,18 @@ import pathlib
 import tempfile
 
 from conan.api.conan_api import ConanAPI
-from conan.api.output import Color, ConanOutput
+from conan.api.output import Color
 from conan.errors import ConanException
 
 import os
+import re
 from io import BytesIO
 import sys
 
 from conan import conan_version
 from conan.internal.model.version import Version
 from conan.internal.model.profile import Profile
+from conan.internal.runner.output import RunnerOutput
 
 class SSHRunner:
     def __init__(
@@ -36,7 +38,7 @@ class SSHRunner:
             hostname = self._create_ssh_connection()
         except Exception as e:
             raise ConanException(f"Error creating SSH connection: {e}")
-        self.logger = SSHOutput(hostname)
+        self.logger = RunnerOutput(hostname)
         self.logger.status(f"Connected to {hostname}", fg=Color.BRIGHT_MAGENTA)
         self.remote_conn = RemoteConnection(self.client, self.logger)
 
@@ -48,25 +50,24 @@ class SSHRunner:
 
     def _create_ssh_connection(self) -> str:
         from paramiko.config import SSHConfig
-        from paramiko.client import SSHClient
+        from paramiko.client import SSHClient, AutoAddPolicy
 
         hostname = self.host_profile.runner.get("ssh.host")
         if not hostname:
             raise ConanException("Host not specified in runner.ssh configuration")
-        configfile = self.host_profile.runner.get("configfile", False)
-        if configfile:
-            if isinstance(configfile, bool):
+        configfile = self.host_profile.runner.get("ssh.configfile", False)
+        if configfile and configfile not in ["False", "false", "0"]:
+            if configfile in ["True", "true", "1"]:
                 ssh_config_file = Path.home() / ".ssh" / "config"
-            elif isinstance(configfile, str):
-                ssh_config_file = Path(configfile)
             else:
-                raise ConanException("Invalid value for runner.ssh.configfile. Should be a string or boolean")
+                ssh_config_file = Path(configfile)
             if not ssh_config_file.exists():
                 raise ConanException(f"SSH config file not found at {ssh_config_file}")
             ssh_config = SSHConfig.from_file(open(ssh_config_file))
             if ssh_config and ssh_config.lookup(hostname):
                 hostname = ssh_config.lookup(hostname)['hostname']
         self.client = SSHClient()
+        self.client.set_missing_host_key_policy(AutoAddPolicy())  # Auto accept unknown keys
         self.client.load_system_host_keys()
         self.client.connect(hostname)
         return hostname
@@ -265,20 +266,8 @@ class SSHRunner:
             self.conan_api.cache.restore(local_cache_tgz)
 
 
-class SSHOutput(ConanOutput):
-    def __init__(self, hostname: str):
-        super().__init__()
-        self.hostname = hostname
-        self.set_warnings_as_errors(True) # Make log errors blocker
-
-    def _write_message(self, msg, fg=None, bg=None, newline=True):
-        # super()._write_message(f"===> SSH Runner ({self.hostname}): ", Color.BLACK, Color.BRIGHT_YELLOW, newline=False)
-        super()._write_message(f"({self.hostname}) | ", Color.BLACK, Color.BRIGHT_YELLOW, newline=False)
-        super()._write_message(msg, fg, bg, newline)
-
-
 class RemoteConnection:
-    def __init__(self, client, logger: SSHOutput):
+    def __init__(self, client, logger: RunnerOutput):
         from paramiko.client import SSHClient
         self.client: SSHClient = client
         self.logger = logger
@@ -348,36 +337,35 @@ class RemoteConnection:
             width, height = os.get_terminal_size()
         else:
             width, height = 80, 24
+        width -= self.logger.padding
         channel.get_pty(width=width, height=height)
 
         channel.exec_command(command)
         stdout = channel.makefile("r")
-
-        log = []
         first_line = True
+
+        cursor_movement_pattern = re.compile(r'(\x1b\[(\d+);(\d+)H)')
+        def remove_cursor_movements(data):
+            """Replace cursor movements with newline if column is 1, or empty otherwise."""
+            def replace_cursor_match(match):
+                column = int(match.group(3))
+                if column == 1:
+                    return "\n"  # Replace with newline if column is 1
+                return ""        # Otherwise, replace with empty string
+            return cursor_movement_pattern.sub(replace_cursor_match, data)
+
+
         while not stdout.channel.exit_status_ready():
-            line = stdout.channel.recv(1024)
+            line = stdout.channel.recv(2048)
             if first_line and is_remote_windows:
                 # Avoid clearing and moving the cursor when the remote server is Windows
                 # https://github.com/PowerShell/Win32-OpenSSH/issues/1738#issuecomment-789434169
-                line = line.replace(b"\x1b[2J\x1b[m\x1b[H",b"")
+                line = line.replace(b"\x1b[2J\x1b[m\x1b[H",b"").replace(b"\r\n", b"")
                 first_line = False
+            # This is the easiest and better working approach but not testable
             # sys.stdout.buffer.write(line)
             # sys.stdout.buffer.flush()
-            line = line.decode('utf-8', errors='ignore')
-            line = remove_cursor_movements(line)
+            line = remove_cursor_movements(line.replace(b'\r', b'').decode(errors='ignore').strip())
             for l in line.splitlines():
-                log.append(l)
-                # if l != "" and l != "\r" and l != "\r\n":
                 self.logger.status(l)
-        # for l in log:
-        #     self.logger.status(l)
         return stdout.channel.recv_exit_status() == 0
-
-import re
-def remove_cursor_movements(text):
-    # Regex pattern to match cursor movement escape sequences (e.g., \x1b[13;1H)
-    cursor_movement_pattern = re.compile(r'\x1b\[\d+;\d+H')
-
-    # Remove cursor movements from the text
-    return cursor_movement_pattern.sub('\n', text)
