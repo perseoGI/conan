@@ -259,7 +259,7 @@ class SSHRunner:
         if stdout.channel.recv_exit_status() != 0:
             raise ConanException("Unable to save remote conan cache state")
 
-        with tempfile.TemporaryDirectory(delete=False) as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             local_cache_tgz = os.path.join(tmp, 'cache.tgz')
             self.remote_conn.get(conan_cache_tgz, local_cache_tgz)
             self.logger.verbose("Retrieved local cache: " + local_cache_tgz)

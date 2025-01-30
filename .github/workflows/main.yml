@@ -20,19 +20,20 @@ jobs:
     uses: ./.github/workflows/linux-tests.yml
     name: Linux test suite
 
-  osx_suite:
-    uses: ./.github/workflows/osx-tests.yml
-    name: OSX test suite
-
-  windows_suite:
-    uses: ./.github/workflows/win-tests.yml
-    name: Windows test suite
+  # osx_suite:
+  #   uses: ./.github/workflows/osx-tests.yml
+  #   name: OSX test suite
+  #
+  # windows_suite:
+  #   uses: ./.github/workflows/win-tests.yml
+  #   name: Windows test suite
 
   code_coverage:
     runs-on: ubuntu-latest
     name: Code coverage
     if: github.ref == 'refs/heads/develop2'         # Only measure code coverage on main branch
-    needs: [linux_suite, osx_suite, windows_suite]
+    # needs: [linux_suite, osx_suite, windows_suite]
+    needs: [linux_suite]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

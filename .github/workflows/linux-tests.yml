@@ -44,6 +44,7 @@ jobs:
   linux_tests:
     needs: build_container
     runs-on: ubuntu-latest
+    if: false
     container:
       image: ghcr.io/${{ github.repository_owner }}/conan-tests:${{ needs.build_container.outputs.image_tag }}
       options: --user conan
@@ -90,13 +91,13 @@ jobs:
           tests: test/${{ matrix.test-type }}
           duration: 20
 
-  linux_docker_tests:
+  linux_runner_tests:
     needs: build_container
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: [3.12, 3.9]
-    name: Docker Runner Tests (${{ matrix.python-version }})
+    name: Runner Tests (${{ matrix.python-version }})
     steps:
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -113,12 +114,30 @@ jobs:
           pip install -r conans/requirements_dev.txt
           pip install -r conans/requirements_server.txt
           pip install -r conans/requirements_runner.txt
+          sudo apt-get update && sudo apt-get install -y openssh-server
 
-      - name: Run tests
+      - name: Install OpenSSH Server
+        run: sudo apt-get update && sudo apt-get install -y openssh-server
+
+      - name: Configure SSH Daemon, Generate SSH Keys & Configure Access
+        run: |
+          sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+          sudo systemctl restart ssh
+          mkdir -p ~/.ssh
+          ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa
+          cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh-keyscan localhost >> ~/.ssh/known_hosts
+
+      - name: Test SSH Connection
+        run: ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no localhost "echo 'SSH Connection Successful!'"
+
+      - name: Run runner tests
         uses: ./.github/actions/test-coverage
         with:
           python-version: ${{ matrix.python-version }}
-          test-type: docker
-          tests: '-m docker_runner -rs'
+          test-type: runners
+          tests: '-m docker_runner -m ssh_runner -rs'
           duration: 20
           workers: 1

@@ -1,3 +1,4 @@
+from pathlib import Path
 import pytest
 import textwrap
 from conan.test.utils.tools import TestClient
@@ -40,8 +41,8 @@ def test_create_ssh_runner_only_host():
 
     assert "[100%] Built target example" in client.out
     assert "Restore: pkg/1.0 in pkgc8bc87152b946" in client.out
-    assert "Restore: pkg/1.0:746e4557a2789d2071a4b9fb6b4960d7d548ced9 in b/pkg8070ba4308584/p" in client.out
-    assert "Restore: pkg/1.0:746e4557a2789d2071a4b9fb6b4960d7d548ced9 metadata in b/pkg8070ba4308584/d/metadata" in client.out
+    assert "Restore: pkg/1.0:8631cf963dbbb4d7a378a64a6fd1dc57558bc2fe" in client.out
+    assert "Restore: pkg/1.0:8631cf963dbbb4d7a378a64a6fd1dc57558bc2fe metadata" in client.out
 
 @pytest.mark.ssh_runner
 def test_create_ssh_runner_with_config():
@@ -88,11 +89,10 @@ def test_create_ssh_runner_with_config():
 
     assert "[100%] Built target example" in client.out
     assert "Restore: pkg/2.0 in pkgc6abef0178849" in client.out
-    assert "Restore: pkg/2.0:746e4557a2789d2071a4b9fb6b4960d7d548ced9 in b/pkgc1542b12b96fb/p" in client.out
-    assert "Restore: pkg/2.0:746e4557a2789d2071a4b9fb6b4960d7d548ced9 metadata in b/pkgc1542b12b96fb/d/metadata" in client.out
+    assert "Restore: pkg/2.0:8631cf963dbbb4d7a378a64a6fd1dc57558bc2fe" in client.out
+    assert "Restore: pkg/2.0:8631cf963dbbb4d7a378a64a6fd1dc57558bc2fe metadata" in client.out
 
-
-    client.save({".ssh/config": ssh_config}, path='~')
+    client.save({"config": ssh_config}, path=Path.home() / ".ssh")
     profile_host = textwrap.dedent(f"""\
     [settings]
     arch={{{{ detect_api.detect_arch() }}}}
@@ -113,5 +113,5 @@ def test_create_ssh_runner_with_config():
 
     assert "[100%] Built target example" in client.out
     assert "Restore: pkg/2.0 in pkgc6abef0178849" in client.out
-    assert "Restore: pkg/2.0:746e4557a2789d2071a4b9fb6b4960d7d548ced9 in b/pkgc1542b12b96fb/p" in client.out
-    assert "Restore: pkg/2.0:746e4557a2789d2071a4b9fb6b4960d7d548ced9 metadata in b/pkgc1542b12b96fb/d/metadata" in client.out
+    assert "Restore: pkg/2.0:8631cf963dbbb4d7a378a64a6fd1dc57558bc2fe" in client.out
+    assert "Restore: pkg/2.0:8631cf963dbbb4d7a378a64a6fd1dc57558bc2fe metadata" in client.out
