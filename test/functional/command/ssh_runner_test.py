@@ -4,7 +4,16 @@ import textwrap
 from conan.test.utils.tools import TestClient
 import os
 
+def ssh_skip():
+    import platform
+    try:
+        import paramiko
+    except ImportError:
+        return True
+    return platform.system() != "Linux"
+
 @pytest.mark.ssh_runner
+@pytest.mark.skipif(ssh_skip(), reason="SSH environment have to be configured")
 def test_create_ssh_runner_only_host():
     """
     Tests the ``conan create . `` with ssh runner using only ssh.host
@@ -45,6 +54,7 @@ def test_create_ssh_runner_only_host():
     assert "Restore: pkg/1.0:8631cf963dbbb4d7a378a64a6fd1dc57558bc2fe metadata" in client.out
 
 @pytest.mark.ssh_runner
+@pytest.mark.skipif(ssh_skip(), reason="SSH environment have to be configured")
 def test_create_ssh_runner_with_config():
     """
     Tests the ``conan create . ``
