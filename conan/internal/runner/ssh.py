@@ -76,23 +76,23 @@ class SSHRunner:
 
     def _ensure_runner_environment(self):
         # Check python3 is available in remote host
-        if self.remote_conn.run_command("python3 --version").success:
+        if self.remote_conn.run_command("python3 --version", "Checking python3 version").success:
             self.remote_python_command = "python3"
         else:
-            result = self.remote_conn.run_command("python --version")
+            result = self.remote_conn.run_command("python --version", "Checking python version")
             if result.success and "Python 3" in result.stdout:
                 self.remote_python_command = "python"
             else:
                 self.logger.error("Unable to locate Python 3 executable in remote SSH environment")
 
         # Determine if remote host is Windows
-        result = self.remote_conn.run_command(f'{self.remote_python_command} -c "import os; print(os.name)"')
+        result = self.remote_conn.run_command(f'{self.remote_python_command} -c "import os; print(os.name)"', "Checking remote OS type")
         if not result.success:
             self.logger.error("Unable to determine remote OS type")
         self.is_remote_windows = result.stdout == "nt"
 
         # Get remote user home folder
-        result = self.remote_conn.run_command(f'{self.remote_python_command} -c "from pathlib import Path; print(Path.home())"')
+        result = self.remote_conn.run_command(f'{self.remote_python_command} -c "from pathlib import Path; print(Path.home())"', "Checking remote home folder")
         if not result.success:
             self.logger.error("Unable to determine remote home user folder")
         home_folder = result.stdout
@@ -104,11 +104,10 @@ class SSHRunner:
         remote_conan_home = Path(home_folder) / ".conan2remote" / "conanhome"
         remote_conan_home = remote_conan_home.as_posix().replace("\\", "/")
         self.remote_conan_home = remote_conan_home
-        self.logger.verbose(f"Remote workfolder: {remote_folder}")
 
         # Ensure remote folders exist
         for folder in [remote_folder, remote_conan_home]:
-            if not self.remote_conn.run_command(f'{self.remote_python_command} -c "import os; os.makedirs(\'{folder}\', exist_ok=True)"').success:
+            if not self.remote_conn.run_command(f'{self.remote_python_command} -c "import os; os.makedirs(\'{folder}\', exist_ok=True)"', f"Checking {folder} folder exists").success:
                 self.logger.error(f"Unable to create remote workfolder at {folder}: {result.stderr}")
 
         # TODO: allow multiple venv given the client side conan version
@@ -120,9 +119,6 @@ class SSHRunner:
         else:
             conan_cmd = remote_folder + "/venv/bin/conan"
 
-        self.logger.verbose(f"Expected remote conan home: {remote_conan_home}")
-        self.logger.verbose(f"Expected remote conan command: {conan_cmd}")
-
         # Check if remote Conan executable exists, otherwise invoke pip inside venv
         has_remote_conan = self.remote_conn.check_file_exists(conan_cmd)
 
@@ -133,12 +129,12 @@ class SSHRunner:
 
         if not has_remote_conan:
             self.logger.verbose(f"Creating remote venv")
-            result = self.remote_conn.run_command(f"{self.remote_python_command} -m venv {conan_venv}")
+            result = self.remote_conn.run_command(f"{self.remote_python_command} -m venv {conan_venv}", "Creating remote venv")
             if not result.success:
                 self.logger.error(f"Unable to create remote venv: {result.stderr}")
             self._install_conan_remotely(python_command, requested_conan_version)
         else:
-            version = self.remote_conn.run_command(f"{conan_cmd} --version", verbose=True).stdout
+            version = self.remote_conn.run_command(f"{conan_cmd} --version", "Checking conan version", verbose=True).stdout
             remote_conan_version = Version(version[version.rfind(" ")+1:])
             if requested_conan_version == "dev" and remote_conan_version.bump(1) == str(conan_version).replace("-dev", ""):
                 pass
@@ -146,7 +142,7 @@ class SSHRunner:
                 self.logger.verbose(f"Remote Conan version mismatch: {remote_conan_version} != {requested_conan_version}")
                 self._install_conan_remotely(python_command, requested_conan_version)
 
-        if not self.remote_conn.run_command(f"{conan_cmd} remote update conancenter --url='https://center2.conan.io'").success:
+        if not self.remote_conn.run_command(f"{conan_cmd} remote update conancenter --url='https://center2.conan.io'", "Updating conancenter remote").success:
             self.logger.error(f"Unable to update conancenter remote: {result.stderr}")
 
         self._create_remote_conan_wrapper(remote_conan_home, remote_folder, conan_cmd)
@@ -154,7 +150,7 @@ class SSHRunner:
     def _install_conan_remotely(self, python_command: str, version: str):
         self.logger.verbose(f"Installing conan version: {version}")
         # Note: this may fail on windows
-        result = self.remote_conn.run_command(f"{python_command} -m pip install conan{f'=={version}' if version != 'dev' else ' --upgrade'}")
+        result = self.remote_conn.run_command(f"{python_command} -m pip install conan{f'=={version}' if version != 'dev' else ' --upgrade'}", "Installing conan")
         if not result.success:
             self.logger.error(f"Unable to install conan in venv: {result.stderr}")
 
@@ -174,8 +170,8 @@ class SSHRunner:
             conan_wrapper_contents = f"""{env_lines}\n{conan_cmd} $@\n"""
 
         self.remote_conan = self.remote_conn.create_remote_script(conan_wrapper_contents, remote_folder + "/conan", self.is_remote_windows)
-        self.remote_conn.run_command(f"{self.remote_conan} config home", verbose=True)
-        if not self.remote_conn.run_command(f"{self.remote_conan} profile detect --force"):
+        self.remote_conn.run_command(f"{self.remote_conan} config home", "Checking conan home", verbose=True)
+        if not self.remote_conn.run_command(f"{self.remote_conan} profile detect --force", "Detecting remote profile").success:
             self.logger.error("Error creating default profile in remote machine")
 
 
@@ -209,7 +205,7 @@ class SSHRunner:
 
         # Create temporary destination directory
         temp_dir_create_cmd = f"""{self.remote_python_command} -c "import tempfile; print(tempfile.mkdtemp(dir='{self.remote_workspace}'))" """
-        result = self.remote_conn.run_command(temp_dir_create_cmd)
+        result = self.remote_conn.run_command(temp_dir_create_cmd, "Creating remote temporary directory")
         if not result.success or not result.stdout:
             self.logger.error(f"Unable to create remote temporary directory: {result.stderr}")
         self.remote_create_dir = result.stdout.replace("\\", '/')
@@ -237,9 +233,8 @@ class SSHRunner:
         conan_create_cmd = f'{self.remote_conan} create {raw_args} --format json > {remote_json_output}'
         script_path = _Path(self.remote_create_dir).joinpath("conan_create").as_posix()
         script_path = self.remote_conn.create_remote_script(conan_create_cmd, script_path, self.is_remote_windows)
-        self.logger.status(f"Remote command: {conan_create_cmd}", fg=Color.BRIGHT_MAGENTA)
 
-        if self.remote_conn.run_interactive_command(script_path, self.is_remote_windows):
+        if self.remote_conn.run_interactive_command(script_path, self.is_remote_windows, f"Running conan create {raw_args}"):
             self._update_local_cache(remote_json_output)
 
         self.client.close()
@@ -254,6 +249,7 @@ class SSHRunner:
             raise ConanException("Unable to generate remote package list")
 
         conan_cache_tgz = _Path(self.remote_create_dir).joinpath("cache.tgz").as_posix()
+        self.logger.status("Retrieving remote artifacts into local cache...", fg=Color.BRIGHT_MAGENTA)
         self.logger.verbose("Remote cache tgz: " + conan_cache_tgz)
         cache_save_command = f"{self.remote_conan} cache save --list {pkg_list_json} --file {conan_cache_tgz}"
         _, stdout, _ = self.client.exec_command(cache_save_command)
@@ -320,23 +316,26 @@ class RemoteConnection:
             self.stdout = stdout
             self.stderr = stderr
 
-    def run_command(self, command: str, verbose: bool = False) -> RunResult:
+    def run_command(self, command: str, friendly_command: str = "", verbose: bool = False) -> RunResult:
         _, stdout, stderr = self.client.exec_command(command)
         log = self.logger.status if verbose else self.logger.verbose
-        log(f'$ {command}', fg=Color.BLUE)
+        log(f'{friendly_command}...', fg=Color.BLUE)
+        self.logger.debug(f'$ {command}')
         result = RemoteConnection.RunResult(stdout.channel.recv_exit_status() == 0,
                                             stdout.read().decode().strip(),
                                             stderr.read().decode().strip())
         log(f"{result.stdout}")
         return result
 
-    def run_interactive_command(self, command: str, is_remote_windows: bool) -> bool:
+    def run_interactive_command(self, command: str, is_remote_windows: bool, friendly_command: str = "") -> bool:
         ''' Run a command in an SSH session.
             When requesting a pseudo-terminal from the server,
             ensure we pass width and height that matches the current
             terminal
             :return: True if the command succeeded
         '''
+        self.logger.status(f'{friendly_command}...', fg=Color.BLUE)
+        self.logger.debug(f"$ {command}")
         channel = self.client.get_transport().open_session()
         if sys.stdout.isatty():
             width, height = os.get_terminal_size()
