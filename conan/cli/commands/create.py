@@ -74,7 +74,7 @@ def create(conan_api, parser, *args):
         runner_instances_map = {
             'docker': DockerRunner,
             # 'ssh': SSHRunner,
-            # 'wsl': WSLRunner,
+            'wsl': WSLRunner,
         }
         try:
             runner_instance = runner_instances_map[runner_type]

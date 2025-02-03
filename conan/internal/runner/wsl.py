@@ -32,10 +32,10 @@ class WSLRunner:
         self.raw_args = raw_args
 
         # to pass to wsl.exe (optional, otherwise run with defaults)
-        distro = host_profile.runner.get("distribution", None)
-        user = host_profile.runner.get("user", None)
+        distro = host_profile.runner.get("wsl.distribution", None)
+        user = host_profile.runner.get("wsl.user", None)
 
-        self.shared_cache = host_profile.runner.get("shared_cache", False)
+        self.shared_cache = host_profile.runner.get("wsl.shared_cache", False)
         if self.shared_cache:
             storage_path = Path(conan_api.config.home()) / 'p' # TODO: there's an API for this!!
             self.remote_conan_cache = subsystem_path("wsl", storage_path.as_posix())
