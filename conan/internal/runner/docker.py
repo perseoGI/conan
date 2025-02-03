@@ -260,18 +260,22 @@ class DockerRunner:
 
         if self.cache in ['clean', 'copy']:
             # Copy all conan profiles and config files to docker workspace
-            os.mkdir(self.abs_runner_home_path)
-            shutil.copytree(
-                os.path.join(self.conan_api.home_folder, 'profiles'),
-                os.path.join(self.abs_runner_home_path, 'profiles')
-            )
+            for profile in set(self.args.profile_host + self.args.profile_build):
+                profile_path = self.conan_api.profiles.get_path(profile)
+                dest_filename = self.abs_runner_home_path / 'profiles' / Path(profile)
+                if not dest_filename.exists():
+                    dest_filename.parent.mkdir(parents=True, exist_ok=True)
+                self.logger.verbose(f"Copying profile '{profile}': {profile_path} -> {dest_filename}")
+                shutil.copy(profile_path, dest_filename)
+
             for file_name in ['global.conf', 'settings.yml', 'remotes.json']:
-                src_file = os.path.join(self.conan_api.home_folder, file_name)
-                if os.path.exists(src_file):
-                    shutil.copy(src_file, os.path.join(self.abs_runner_home_path, file_name))
+                src_file = Path(self.conan_api.home_folder) / file_name
+                if src_file.exists():
+                    self.logger.verbose(f"Copying {src_file} -> {self.abs_runner_home_path / file_name}")
+                    shutil.copy(src_file, self.abs_runner_home_path / file_name)
 
             if self.cache == 'copy':
-                tgz_path = os.path.join(self.abs_runner_home_path, 'local_cache_save.tgz')
+                tgz_path = self.abs_runner_home_path / 'local_cache_save.tgz'
                 self.logger.status(f'Save host cache in: {tgz_path}')
                 self.conan_api.cache.save(self.conan_api.list.select(ListPattern("*:*")), tgz_path)
         return volumes, environment
@@ -287,7 +291,7 @@ class DockerRunner:
             self._run_command('cp -r "'+self.abs_docker_path+'/.conanrunner/profiles/." ${HOME}/.conan2/profiles/.', verbose=False)
 
             for file_name in ['global.conf', 'settings.yml', 'remotes.json']:
-                if os.path.exists( os.path.join(self.abs_runner_home_path, file_name)):
+                if (self.abs_runner_home_path / file_name).exists():
                     self._run_command('cp "'+self.abs_docker_path+'/.conanrunner/'+file_name+'" ${HOME}/.conan2/'+file_name, verbose=False)
             if self.cache in ['copy']:
                 self._run_command('conan cache restore "'+self.abs_docker_path+'/.conanrunner/local_cache_save.tgz"')
@@ -296,6 +300,6 @@ class DockerRunner:
         if self.cache != 'shared':
             self._run_command('conan list --graph=create.json --graph-binaries=build --format=json > pkglist.json', verbose=False)
             self._run_command('conan cache save --list=pkglist.json --file "'+self.abs_docker_path+'"/.conanrunner/docker_cache_save.tgz')
-            tgz_path = os.path.join(self.abs_runner_home_path, 'docker_cache_save.tgz')
+            tgz_path = self.abs_runner_home_path / 'docker_cache_save.tgz'
             self.logger.status(f'Restore host cache from: {tgz_path}')
             self.conan_api.cache.restore(tgz_path)
