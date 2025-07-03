@@ -287,6 +287,7 @@ def _tar_extract_with_plugin(fileobj, destination_dir, compression_plugin, conf)
         the_tar.extractall(path=temp_dir)
         extracted_file = the_tar.getnames()[0]
         the_tar.close()
+        ConanOutput().success(f"{time.time() - t1}")
         # Check if the tar was compressed with the compression plugin by checking the existence of
         # our constant COMPRESSED_PLUGIN_TAR_NAME (without extension as extension is added by the plugin)
         if list(Path(temp_dir).glob(f"{COMPRESSED_PLUGIN_TAR_NAME}.*")):
